@@ -1,0 +1,6 @@
+{
+  "name": "Viroklipz",
+  "description": "Red social de videos cortos verticales con feed cinematográfico, creación de klips, comentarios en tiempo real y perfiles de creadores.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
