@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
@@ -10,8 +11,6 @@
   html,
   body {
     font-family: var(--font-sans);
-    background-color: #09090b;
-    color: #f4f4f5;
     overscroll-behavior-y: none;
   }
 
@@ -21,6 +20,26 @@
   .font-display {
     font-family: var(--font-display);
   }
+}
+
+.bg-neon-cta {
+  background-color: #E84393;
+  transition: background-color 180ms ease, transform 150ms ease, opacity 150ms ease;
+}
+
+.bg-neon-cta:hover {
+  background-color: #d63683;
+}
+
+.text-neon-gradient {
+  background-image: linear-gradient(90deg, #6C5CE7 0%, #00B4D8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.dark .text-neon-gradient {
+  background-image: linear-gradient(90deg, #8B7CF6 0%, #00B4D8 100%);
 }
 
 .no-scrollbar {
@@ -53,12 +72,79 @@
   }
 }
 
+@keyframes bannerZoomLoop {
+  0% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  50% {
+    transform: scale(1.12) translate3d(0, -1%, 0);
+  }
+  100% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bannerPanLoop {
+  0% {
+    transform: scale(1.16) translate3d(-4%, 0, 0);
+  }
+  50% {
+    transform: scale(1.16) translate3d(4%, 0, 0);
+  }
+  100% {
+    transform: scale(1.16) translate3d(-4%, 0, 0);
+  }
+}
+
+@keyframes bannerFloatLoop {
+  0% {
+    transform: scale(1.08) translate3d(0, -2.5%, 0);
+  }
+  50% {
+    transform: scale(1.11) translate3d(0, 2.5%, 0);
+  }
+  100% {
+    transform: scale(1.08) translate3d(0, -2.5%, 0);
+  }
+}
+
+@keyframes bannerPulseLoop {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.08);
+    filter: brightness(1.08);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
 .animate-ken-burns {
   animation: kenBurnsSlow 16s ease-in-out infinite;
 }
 
 .animate-ken-burns-paused {
   animation-play-state: paused;
+}
+
+.animate-banner-zoom {
+  animation: bannerZoomLoop 4s ease-in-out infinite;
+}
+
+.animate-banner-pan {
+  animation: bannerPanLoop 5s ease-in-out infinite;
+}
+
+.animate-banner-float {
+  animation: bannerFloatLoop 4s ease-in-out infinite;
+}
+
+.animate-banner-pulse {
+  animation: bannerPulseLoop 3s ease-in-out infinite;
 }
 
 .animate-vinyl-spin {
@@ -71,7 +157,12 @@
 
 @media (prefers-reduced-motion: reduce) {
   .animate-ken-burns,
-  .animate-vinyl-spin {
+  .animate-vinyl-spin,
+  .animate-banner-zoom,
+  .animate-banner-pan,
+  .animate-banner-float,
+  .animate-banner-pulse {
     animation: none !important;
   }
 }
+

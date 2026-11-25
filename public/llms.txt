@@ -1,0 +1,24 @@
+# Viroklipz
+
+> Red social PWA (Aplicación Web Progresiva) ligera de videos cortos verticales 9:16, transmisiones en vivo (LIVE), historias y comunidad en tiempo real sin descargas pesadas.
+
+## Qué es Viroklipz
+Viroklipz es una plataforma social web progresiva diseñada para creadores de contenido y espectadores que buscan la fluidez de una app nativa directamente desde el navegador, sin ocupar gigabytes de almacenamiento ni consumir datos innecesarios.
+
+## Ventajas principales como PWA
+- **Instalación instantánea sin tiendas**: Se añade a la pantalla de inicio en Android, iOS y escritorio en segundos con actualizaciones automáticas.
+- **Almacenamiento mínimo**: Funciona con una caché ligera frente a aplicaciones nativas tradicionales.
+- **Modo Ahorro de Datos (720 kbps)**: Compresión inteligente al grabar klips (10s, 15s, 30s o 60s) y precarga controlada para redes móviles.
+- **Feed híbrido Para ti y Siguiendo**: Combina klips verticales 9:16 con transmisiones en vivo (LIVE) en tiempo real.
+- **Historias, notas y chat en tiempo real**: Hasta 10 historias por usuario, mensajes directos, sala de la comunidad y sistema de rachas diarias.
+- **Viroklipz Studio y perfil personalizable**: Métricas de visualizaciones, me gusta y guardados, fondo animado y bordes de video adaptables al modo Claro y Oscuro.
+
+## Audiencia y casos de uso
+- Creadores de video vertical corto que quieren publicar rápido desde móvil o escritorio.
+- Comunidades en vivo que buscan transmisiones LIVE sin fricción de instalación.
+- Usuarios con espacio limitado o planes de datos móviles reducidos.
+
+## Enlaces principales
+- Inicio y registro: /
+- Manifiesto PWA: /manifest.webmanifest
+- Mapa del sitio: /sitemap.xml

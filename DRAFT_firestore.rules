@@ -18,6 +18,24 @@ service cloud.firestore {
       );
     }
 
+    function isBootstrappedOwner() {
+      return isVerified()
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['Egabriel79@gmail.com', 'egabriel79@gmail.com'];
+    }
+
+    function isAdmin() {
+      return isBootstrappedOwner()
+        || (isVerified() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)))
+        || (
+          isVerified()
+          && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+          && 'isAdmin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+          && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+        );
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -58,15 +76,28 @@ service cloud.firestore {
           'uid', 'username', 'displayName', 'bio', 'avatarUrl', 'isPublic', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'username', 'displayName', 'bio', 'avatarUrl', 'isPublic', 'createdAt', 'updatedAt'
+          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isAdmin', 'coins', 'followersCount', 'country', 'email', 'createdAt', 'updatedAt'
         ])
         && data.uid == userId
-        && data.uid == request.auth.uid
         && isValidUsername(data.username)
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40
         && data.bio is string && data.bio.size() <= 160
+        && (!('bioColor' in data) || (data.bioColor is string && data.bioColor.size() <= 16))
+        && (!('personalLink' in data) || (data.personalLink is string && data.personalLink.size() <= 160))
+        && (!('pronouns' in data) || (data.pronouns is string && data.pronouns.size() <= 32))
         && data.avatarUrl is string && data.avatarUrl.size() <= 300
         && data.isPublic is bool
+        && (!('fcmTokenWeb' in data) || (data.fcmTokenWeb is string && data.fcmTokenWeb.size() <= 512))
+        && (!('presenceStatus' in data) || data.presenceStatus in ['online', 'busy', 'hidden'])
+        && (!('mutedCommunityChat' in data) || data.mutedCommunityChat is bool)
+        && (!('fanLevel' in data) || (data.fanLevel is int && data.fanLevel >= 1 && data.fanLevel <= 50))
+        && (!('fanPoints' in data) || (data.fanPoints is int && data.fanPoints >= 0 && data.fanPoints <= 10000000))
+        && (!('banned' in data) || data.banned is bool)
+        && (!('isAdmin' in data) || data.isAdmin is bool)
+        && (!('coins' in data) || (data.coins is int && data.coins >= 0 && data.coins <= 100000000))
+        && (!('followersCount' in data) || (data.followersCount is int && data.followersCount >= 0 && data.followersCount <= 100000000))
+        && (!('country' in data) || (data.country is string && data.country.size() <= 64))
+        && (!('email' in data) || (data.email is string && data.email.size() <= 120))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -134,17 +165,22 @@ service cloud.firestore {
           'id', 'reporterId', 'targetType', 'targetId', 'targetAuthorId', 'reason', 'details', 'createdAt'
         ])
         && data.keys().hasOnly([
-          'id', 'reporterId', 'targetType', 'targetId', 'targetAuthorId', 'reason', 'details', 'createdAt'
+          'id', 'reporterId', 'reporterUid', 'targetType', 'targetId', 'videoId', 'targetAuthorId', 'reason', 'details', 'status', 'reviewedBy', 'reviewedAt', 'createdAt'
         ])
         && data.id == reportId
         && isValidId(data.id)
-        && data.reporterId == request.auth.uid
+        && isValidId(data.reporterId)
+        && (!('reporterUid' in data) || data.reporterUid == data.reporterId)
         && data.targetType in ['clip', 'chat_message', 'user']
         && isValidId(data.targetId)
+        && (!('videoId' in data) || isValidId(data.videoId))
         && isValidId(data.targetAuthorId)
-        && data.reason in ['spam', 'acoso', 'contenido_inapropiado', 'derechos_autor']
+        && data.reason in ['spam', 'acoso', 'contenido_inapropiado', 'desnudo', 'derechos_autor']
         && data.details is string && data.details.size() <= 240
-        && data.createdAt == request.time;
+        && (!('status' in data) || data.status in ['pending', 'resolved', 'dismissed'])
+        && (!('reviewedBy' in data) || isValidId(data.reviewedBy))
+        && (!('reviewedAt' in data) || data.reviewedAt is timestamp)
+        && data.createdAt is timestamp;
     }
 
     function isValidHashtags(tags) {
@@ -172,8 +208,8 @@ service cloud.firestore {
         && isValidUsername(data.authorUsername)
         && data.authorDisplayName is string && data.authorDisplayName.size() >= 1 && data.authorDisplayName.size() <= 40
         && data.authorAvatarUrl is string && data.authorAvatarUrl.size() <= 300
-        && data.caption is string && data.caption.size() >= 1 && data.caption.size() <= 220
-        && data.category in ['baile', 'musica', 'cocina', 'deportes', 'arte', 'comedia', 'viajes']
+        && data.caption is string && data.caption.size() <= 1000
+        && data.category in ['general', 'baile', 'musica', 'cocina', 'deportes', 'arte', 'comedia', 'viajes']
         && isValidHashtags(data.hashtags)
         && data.audioTitle is string && data.audioTitle.size() >= 1 && data.audioTitle.size() <= 80
         && data.audioPreset in ['urban_beat', 'sunset_house', 'lofi_espresso', 'alpine_rush', 'analog_synth']
@@ -231,7 +267,7 @@ service cloud.firestore {
           'id', 'participantIds', 'lastMessageText', 'lastSenderId', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'id', 'participantIds', 'lastMessageText', 'lastSenderId', 'createdAt', 'updatedAt'
+          'id', 'participantIds', 'lastMessageText', 'lastSenderId', 'streak', 'lastMessageDate', 'createdAt', 'updatedAt'
         ])
         && data.id == threadId
         && isValidId(data.id)
@@ -243,6 +279,8 @@ service cloud.firestore {
         && request.auth.uid in data.participantIds
         && data.lastMessageText is string && data.lastMessageText.size() <= 240
         && data.lastSenderId == request.auth.uid
+        && (!('streak' in data) || (data.streak is int && data.streak >= 0 && data.streak <= 100000))
+        && (!('lastMessageDate' in data) || data.lastMessageDate is timestamp)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -288,21 +326,197 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidCommunityChatMessage(data, messageId) {
+      return data.keys().hasAll([
+          'id', 'roomId', 'authorId', 'authorUsername', 'authorAvatarUrl', 'text', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'roomId', 'authorId', 'authorUsername', 'authorAvatarUrl', 'text', 'createdAt'
+        ])
+        && data.id == messageId
+        && isValidId(data.id)
+        && data.roomId == 'community'
+        && data.authorId == request.auth.uid
+        && isValidUsername(data.authorUsername)
+        && data.authorAvatarUrl is string && data.authorAvatarUrl.size() <= 300
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 240
+        && data.createdAt == request.time;
+    }
+
+    function isValidFanPerks(perks) {
+      return perks is list
+        && perks.size() <= 12
+        && (
+          perks.size() == 0
+          || (
+            perks[0] is map
+            && perks[0].id is string
+            && perks[0].title is string && perks[0].title.size() >= 1 && perks[0].title.size() <= 60
+            && perks[0].minLevel is int && perks[0].minLevel in [1, 10, 20, 30, 40, 50]
+          )
+        );
+    }
+
+    function isValidAudienceFavorites(favs) {
+      return favs is list
+        && favs.size() <= 12
+        && (
+          favs.size() == 0
+          || (
+            favs[0] is map
+            && favs[0].id is string
+            && favs[0].action is string && favs[0].action.size() >= 1 && favs[0].action.size() <= 80
+            && favs[0].giftId is string && favs[0].giftId.size() >= 1 && favs[0].giftId.size() <= 32
+            && favs[0].giftName is string && favs[0].giftName.size() >= 1 && favs[0].giftName.size() <= 40
+            && favs[0].coins is int && favs[0].coins >= 1 && favs[0].coins <= 100000
+          )
+        );
+    }
+
+    function isValidLiveConfig(data, creatorUid) {
+      return data.keys().hasAll(['creatorUid', 'fanPerks', 'audienceFavorites', 'updatedAt'])
+        && data.keys().hasOnly([
+          'creatorUid', 'fanPerks', 'audienceFavorites',
+          'fanClubName', 'fanPointsPerCoin',
+          'vipAlertEnabled', 'vipAlertTitle', 'vipAlertStyle', 'vipAlertDurationSec', 'vipAlertSound',
+          'updatedAt'
+        ])
+        && data.creatorUid == creatorUid
+        && data.creatorUid == request.auth.uid
+        && isValidFanPerks(data.fanPerks)
+        && isValidAudienceFavorites(data.audienceFavorites)
+        && (!('fanClubName' in data) || (data.fanClubName is string && data.fanClubName.size() <= 36))
+        && (!('fanPointsPerCoin' in data) || (data.fanPointsPerCoin is int && data.fanPointsPerCoin >= 1 && data.fanPointsPerCoin <= 20))
+        && (!('vipAlertEnabled' in data) || data.vipAlertEnabled is bool)
+        && (!('vipAlertTitle' in data) || (data.vipAlertTitle is string && data.vipAlertTitle.size() <= 40))
+        && (!('vipAlertStyle' in data) || data.vipAlertStyle in ['crystal_magenta', 'electric_pulse', 'aurora_vip'])
+        && (!('vipAlertDurationSec' in data) || (data.vipAlertDurationSec is int && data.vipAlertDurationSec >= 3 && data.vipAlertDurationSec <= 10))
+        && (!('vipAlertSound' in data) || data.vipAlertSound is bool)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLiveStream(data, streamId) {
+      return data.keys().hasAll([
+          'id', 'hostUid', 'hostUsername', 'hostDisplayName', 'hostAvatarUrl',
+          'title', 'category', 'previewImageUrl', 'streamUrl', 'audioPreset',
+          'status', 'viewerCount', 'likesCount', 'startedAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'hostUid', 'hostUsername', 'hostDisplayName', 'hostAvatarUrl',
+          'title', 'about', 'audience', 'quality', 'visualEffect',
+          'category', 'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
+          'audioPreset', 'status', 'viewerCount', 'likesCount', 'giftsCount',
+          'fanPerks', 'audienceFavorites', 'fanClubName', 'fanPointsPerCoin',
+          'vipAlertEnabled', 'vipAlertTitle', 'vipAlertStyle', 'vipAlertDurationSec', 'vipAlertSound',
+          'startedAt', 'updatedAt'
+        ])
+        && data.id == streamId
+        && isValidId(data.id)
+        && isValidId(data.hostUid)
+        && isValidUsername(data.hostUsername)
+        && data.hostDisplayName is string && data.hostDisplayName.size() >= 1 && data.hostDisplayName.size() <= 40
+        && data.hostAvatarUrl is string && data.hostAvatarUrl.size() <= 300
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
+        && (!('about' in data) || (data.about is string && data.about.size() <= 240))
+        && (!('audience' in data) || data.audience in ['public', 'friends'])
+        && (!('quality' in data) || data.quality in ['720p', '1080p'])
+        && (!('visualEffect' in data) || (data.visualEffect is string && data.visualEffect.size() <= 32))
+        && data.category in ['general', 'baile', 'musica', 'cocina', 'deportes', 'arte', 'comedia', 'viajes']
+        && data.previewImageUrl is string && data.previewImageUrl.size() <= 300
+        && (data.previewImageUrl.size() == 0 || data.previewImageUrl.matches('^(/src/assets/.*|https://.*)$'))
+        && data.streamUrl is string && data.streamUrl.size() <= 300
+        && (data.streamUrl.size() == 0 || data.streamUrl.matches('^https://.*'))
+        && (!('guestUid' in data) || (data.guestUid is string && data.guestUid.size() <= 128))
+        && (!('guestDisplayName' in data) || (data.guestDisplayName is string && data.guestDisplayName.size() <= 40))
+        && (!('guestStreamUrl' in data) || (data.guestStreamUrl is string && data.guestStreamUrl.size() <= 300 && (data.guestStreamUrl.size() == 0 || data.guestStreamUrl.matches('^https://.*'))))
+        && data.audioPreset in ['urban_beat', 'sunset_house', 'lofi_espresso', 'alpine_rush', 'analog_synth']
+        && data.status in ['live', 'ended']
+        && data.viewerCount is int && data.viewerCount >= 1 && data.viewerCount <= 1000000
+        && data.likesCount is int && data.likesCount >= 0 && data.likesCount <= 100000000
+        && (!('giftsCount' in data) || (data.giftsCount is int && data.giftsCount >= 0 && data.giftsCount <= 100000000))
+        && (!('fanPerks' in data) || isValidFanPerks(data.fanPerks))
+        && (!('audienceFavorites' in data) || isValidAudienceFavorites(data.audienceFavorites))
+        && (!('fanClubName' in data) || (data.fanClubName is string && data.fanClubName.size() <= 36))
+        && (!('fanPointsPerCoin' in data) || (data.fanPointsPerCoin is int && data.fanPointsPerCoin >= 1 && data.fanPointsPerCoin <= 20))
+        && (!('vipAlertEnabled' in data) || data.vipAlertEnabled is bool)
+        && (!('vipAlertTitle' in data) || (data.vipAlertTitle is string && data.vipAlertTitle.size() <= 40))
+        && (!('vipAlertStyle' in data) || data.vipAlertStyle in ['crystal_magenta', 'electric_pulse', 'aurora_vip'])
+        && (!('vipAlertDurationSec' in data) || (data.vipAlertDurationSec is int && data.vipAlertDurationSec >= 3 && data.vipAlertDurationSec <= 10))
+        && (!('vipAlertSound' in data) || data.vipAlertSound is bool)
+        && data.startedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isLiveStreamActive(streamId) {
+      return exists(/databases/$(database)/documents/liveStreams/$(streamId))
+        && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.status == 'live';
+    }
+
+    function isValidLiveStreamMessage(data, messageId, streamId) {
+      return data.keys().hasAll([
+          'id', 'streamId', 'authorId', 'authorUsername', 'authorDisplayName',
+          'authorAvatarUrl', 'text', 'kind', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'streamId', 'authorId', 'authorUsername', 'authorDisplayName',
+          'authorAvatarUrl', 'text', 'kind', 'giftId', 'giftName', 'giftValue',
+          'senderFanLevel', 'triggeredAction', 'createdAt'
+        ])
+        && data.id == messageId
+        && isValidId(data.id)
+        && data.streamId == streamId
+        && isValidId(data.streamId)
+        && data.authorId == request.auth.uid
+        && isValidUsername(data.authorUsername)
+        && data.authorDisplayName is string && data.authorDisplayName.size() >= 1 && data.authorDisplayName.size() <= 40
+        && data.authorAvatarUrl is string && data.authorAvatarUrl.size() <= 300
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 180
+        && data.kind in ['chat', 'like', 'gift']
+        && (!('giftId' in data) || (data.giftId is string && data.giftId.size() <= 32))
+        && (!('giftName' in data) || (data.giftName is string && data.giftName.size() <= 40))
+        && (!('giftValue' in data) || (data.giftValue is int && data.giftValue >= 0 && data.giftValue <= 100000))
+        && (!('senderFanLevel' in data) || (data.senderFanLevel is int && data.senderFanLevel >= 1 && data.senderFanLevel <= 50))
+        && (!('triggeredAction' in data) || (data.triggeredAction is string && data.triggeredAction.size() <= 80))
+        && data.createdAt == request.time;
+    }
+
     // --- Collection Rules ---
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list, create, update, delete: if false;
+    }
+
     match /users/{userId} {
-      allow get: if isValidId(userId) && (isOwner(userId) || (resource != null && existing().isPublic == true));
-      allow list: if existing().isPublic == true || (isSignedIn() && existing().uid == request.auth.uid);
+      allow get: if isValidId(userId) && (isOwner(userId) || (resource != null && existing().isPublic == true) || isAdmin());
+      allow list: if existing().isPublic == true || (isSignedIn() && existing().uid == request.auth.uid) || isBootstrappedOwner();
       allow create: if isVerified() && isValidId(userId) && isOwner(userId)
         && isValidUserProfile(incoming(), userId)
+        && incoming().uid == request.auth.uid
+        && !('isAdmin' in incoming())
+        && !('banned' in incoming())
+        && !('coins' in incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
-      allow update: if isVerified() && isValidId(userId) && isOwner(userId)
+      allow update: if isVerified() && isValidId(userId)
         && isValidUserProfile(incoming(), userId)
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'displayName', 'bio', 'avatarUrl', 'isPublic', 'updatedAt']);
-      allow delete: if false;
+        && (
+          (
+            isOwner(userId)
+            && incoming().uid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'country', 'updatedAt'
+            ])
+          )
+          ||
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly(['banned', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerified() && isValidId(userId) && (isOwner(userId) || isAdmin());
 
       match /private/{docId} {
         allow get: if isValidId(userId) && isValidId(docId) && isOwner(userId);
@@ -373,8 +587,11 @@ service cloud.firestore {
       allow get: if isValidId(clipId) && (
         (resource != null && existing().visibility == 'public')
         || (isSignedIn() && resource != null && existing().authorId == request.auth.uid)
+        || isAdmin()
       );
-      allow list: if existing().visibility == 'public' || (isSignedIn() && existing().authorId == request.auth.uid);
+      allow list: if existing().visibility == 'public'
+        || (isSignedIn() && existing().authorId == request.auth.uid)
+        || isBootstrappedOwner();
 
       allow create: if isVerified() && isValidId(clipId)
         && isValidClip(incoming(), clipId)
@@ -387,13 +604,22 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
 
       allow update: if isVerified() && isValidId(clipId) && isValidClip(incoming(), clipId) && (
-        // Tier 1: Clip Author edits caption, category, hashtags, visibility
+        // Tier 1: Clip Author edits caption, category, hashtags, visibility, or synced author metadata
         (
           existing().authorId == request.auth.uid
           && incoming().authorId == existing().authorId
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'category', 'hashtags', 'visibility', 'updatedAt'])
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'caption',
+            'category',
+            'hashtags',
+            'visibility',
+            'authorDisplayName',
+            'authorUsername',
+            'authorAvatarUrl',
+            'updatedAt'
+          ])
         )
         ||
         // Tier 2a: Atomic Like (+1 synced with /users/{uid}/likes/{clipId})
@@ -467,11 +693,11 @@ service cloud.firestore {
         )
       );
 
-      allow delete: if isVerified() && isValidId(clipId) && existing().authorId == request.auth.uid;
+      allow delete: if isVerified() && isValidId(clipId) && (existing().authorId == request.auth.uid || isAdmin());
 
       match /comments/{commentId} {
         allow get: if isValidId(clipId) && isValidId(commentId)
-          && get(/databases/$(database)/documents/clips/$(clipId)).data.visibility == 'public';
+          && (get(/databases/$(database)/documents/clips/$(clipId)).data.visibility == 'public' || isAdmin());
         allow list: if existing().clipId == clipId;
         allow create: if isVerified() && isValidId(clipId) && isValidId(commentId)
           && isValidComment(incoming(), commentId, clipId)
@@ -482,6 +708,7 @@ service cloud.firestore {
           && (
             existing().authorId == request.auth.uid
             || get(/databases/$(database)/documents/clips/$(clipId)).data.authorId == request.auth.uid
+            || isAdmin()
           );
       }
     }
@@ -493,7 +720,7 @@ service cloud.firestore {
         && isStarterClipId(incoming().clipId)
         && isValidComment(incoming(), commentId, incoming().clipId);
       allow update: if false;
-      allow delete: if isVerified() && isValidId(commentId) && existing().authorId == request.auth.uid;
+      allow delete: if isVerified() && isValidId(commentId) && (existing().authorId == request.auth.uid || isAdmin());
     }
 
     match /chats/{roomId}/messages/{messageId} {
@@ -503,13 +730,31 @@ service cloud.firestore {
         && isValidChatMessage(incoming(), messageId, roomId);
       allow update: if false;
       allow delete: if isVerified() && isValidChatRoom(roomId) && isValidId(messageId)
-        && existing().authorId == request.auth.uid;
+        && (existing().authorId == request.auth.uid || isAdmin());
     }
 
     match /reports/{reportId} {
-      allow get, list, update, delete: if false;
+      allow get: if isAdmin() && isValidId(reportId);
+      allow list: if isBootstrappedOwner() && isValidId(existing().id);
       allow create: if isVerified() && isValidId(reportId)
-        && isValidReport(incoming(), reportId);
+        && isValidReport(incoming(), reportId)
+        && incoming().reporterId == request.auth.uid
+        && (!('status' in incoming()) || incoming().status == 'pending')
+        && !('reviewedBy' in incoming())
+        && !('reviewedAt' in incoming())
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidId(reportId)
+        && isValidReport(incoming(), reportId)
+        && incoming().id == existing().id
+        && incoming().reporterId == existing().reporterId
+        && incoming().targetType == existing().targetType
+        && incoming().targetId == existing().targetId
+        && incoming().targetAuthorId == existing().targetAuthorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().reviewedBy == request.auth.uid
+        && incoming().reviewedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedBy', 'reviewedAt']);
+      allow delete: if isAdmin() && isValidId(reportId);
     }
 
     match /directThreads/{threadId} {
@@ -518,6 +763,7 @@ service cloud.firestore {
       allow list: if isSignedIn() && request.auth.uid in existing().participantIds;
       allow create: if isVerified() && isValidId(threadId)
         && isValidDirectThread(incoming(), threadId)
+        && (!('lastMessageDate' in incoming()) || incoming().lastMessageDate == request.time)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isVerified() && isValidId(threadId)
@@ -526,8 +772,9 @@ service cloud.firestore {
         && incoming().id == existing().id
         && incoming().participantIds == existing().participantIds
         && incoming().createdAt == existing().createdAt
+        && (!('lastMessageDate' in incoming()) || !('lastMessageDate' in incoming().diff(existing()).affectedKeys()) || incoming().lastMessageDate == request.time)
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageText', 'lastSenderId', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageText', 'lastSenderId', 'streak', 'lastMessageDate', 'updatedAt']);
       allow delete: if false;
 
       match /messages/{messageId} {
@@ -554,7 +801,116 @@ service cloud.firestore {
         && isValidStatusNote(incoming(), userId)
         && incoming().uid == existing().uid
         && incoming().updatedAt == request.time;
-      allow delete: if isVerified() && isValidId(userId) && isOwner(userId);
+      allow delete: if isVerified() && isValidId(userId) && (isOwner(userId) || isAdmin());
+    }
+
+    match /community_chat/{messageId} {
+      allow get: if isSignedIn() && isValidId(messageId);
+      allow list: if isSignedIn() && existing().roomId == 'community';
+      allow create: if isVerified() && isValidId(messageId)
+        && isValidCommunityChatMessage(incoming(), messageId);
+      allow update: if false;
+      allow delete: if isVerified() && isValidId(messageId)
+        && (existing().authorId == request.auth.uid || isAdmin());
+    }
+
+    match /liveStreams/{streamId} {
+      allow get: if isValidId(streamId) && resource != null && (
+        existing().status == 'live'
+        || (isSignedIn() && existing().hostUid == request.auth.uid)
+        || isAdmin()
+      );
+      allow list: if existing().status == 'live'
+        || (isSignedIn() && existing().hostUid == request.auth.uid)
+        || isBootstrappedOwner();
+      allow create: if isVerified() && isValidId(streamId)
+        && isValidLiveStream(incoming(), streamId)
+        && incoming().hostUid == request.auth.uid
+        && incoming().status == 'live'
+        && incoming().viewerCount == 1
+        && incoming().likesCount == 0
+        && (!('giftsCount' in incoming()) || incoming().giftsCount == 0)
+        && incoming().startedAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(streamId)
+        && isValidLiveStream(incoming(), streamId)
+        && incoming().id == existing().id
+        && incoming().hostUid == existing().hostUid
+        && incoming().startedAt == existing().startedAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isAdmin()
+            && incoming().status == 'ended'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          )
+          ||
+          (
+            existing().status == 'live' && (
+              (
+                existing().hostUid == request.auth.uid
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'title', 'about', 'audience', 'quality', 'visualEffect', 'category',
+                  'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
+                  'fanPerks', 'audienceFavorites', 'fanClubName', 'fanPointsPerCoin',
+                  'vipAlertEnabled', 'vipAlertTitle', 'vipAlertStyle', 'vipAlertDurationSec', 'vipAlertSound',
+                  'status', 'viewerCount', 'updatedAt'
+                ])
+              )
+              ||
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt'])
+                && incoming().likesCount == existing().likesCount + 1
+              )
+              ||
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['giftsCount', 'updatedAt'])
+                && (
+                  ('giftsCount' in existing() && incoming().giftsCount == existing().giftsCount + 1)
+                  || (!('giftsCount' in existing()) && incoming().giftsCount == 1)
+                )
+              )
+              ||
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['viewerCount', 'updatedAt'])
+                && (
+                  incoming().viewerCount == existing().viewerCount + 1
+                  || (existing().viewerCount > 1 && incoming().viewerCount == existing().viewerCount - 1)
+                )
+              )
+            )
+          )
+        );
+      allow delete: if isVerified() && isValidId(streamId) && (existing().hostUid == request.auth.uid || isAdmin());
+
+      match /messages/{messageId} {
+        allow get: if isValidId(streamId) && isValidId(messageId)
+          && (isLiveStreamActive(streamId) || isAdmin());
+        allow list: if existing().streamId == streamId && isLiveStreamActive(streamId);
+        allow create: if isVerified() && isValidId(streamId) && isValidId(messageId)
+          && isLiveStreamActive(streamId)
+          && isValidLiveStreamMessage(incoming(), messageId, streamId);
+        allow update: if false;
+        allow delete: if isVerified() && isValidId(streamId) && isValidId(messageId)
+          && (
+            existing().authorId == request.auth.uid
+            || get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+            || isAdmin()
+          );
+      }
+    }
+
+    match /liveConfigs/{creatorUid} {
+      allow get: if isSignedIn() && isValidId(creatorUid);
+      allow list: if false;
+      allow create: if isVerified() && isValidId(creatorUid) && isOwner(creatorUid)
+        && isValidLiveConfig(incoming(), creatorUid)
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(creatorUid) && isOwner(creatorUid)
+        && isValidLiveConfig(incoming(), creatorUid)
+        && incoming().creatorUid == existing().creatorUid
+        && incoming().updatedAt == request.time;
+      allow delete: if isVerified() && isValidId(creatorUid) && (isOwner(creatorUid) || isAdmin());
     }
   }
 }

@@ -12,6 +12,9 @@
 9. **Moderation Privacy & Ownership**: `/reports/{reportId}` is strictly write-only (`reporterId == request.auth.uid`, read/list/update/delete denied to all clients), and `/users/{userId}/blocked/{targetId}` is strictly owner-isolated.
 10. **Direct Message Participant Isolation**: `/directThreads/{threadId}` is readable/listable strictly by users in `participantIds` (`size() == 2` distinct IDs), and subcollection messages enforce the Master Gate via parent `get()`.
 11. **Status Note Ownership**: `/statusNotes/{userId}` can only be written or deleted by `userId == request.auth.uid` with `note.size() <= 60`.
+12. **Live Stream Host & State Integrity**: `/liveStreams/{streamId}` can only be created by `hostUid == request.auth.uid` with `status == 'live'`, `viewerCount == 1`, `likesCount == 0`, and once `status == 'ended'` the stream is locked against non-delete mutations (except admin moderation override). Subcollection `/liveStreams/{streamId}/messages` enforces Master Gate parent `status == 'live'` check for chat, like, and gift events.
+13. **Owner & Admin RBAC Isolation**: `/admins/{adminUid}` cannot be created, updated, or deleted via client SDKs; `isBootstrappedOwner()` requires `email_verified == true` and verified owner email; non-admin users cannot list/read/update `/reports/{reportId}` or delete another user's `/clips/{clipId}`.
+14. **Creator Live Config & Fan Perks Integrity**: `/liveConfigs/{creatorUid}` is writable strictly by `creatorUid == request.auth.uid` with bounded `fanPerks` and `audienceFavorites` arrays (`<= 12` entries).
 
 ## 2. The "Dirty Dozen" Adversarial Payloads
 1. **Identity Spoofing on Clip Create**: `{ id: "c1", authorId: "victim_uid", ... }` -> `PERMISSION_DENIED` (`authorId != request.auth.uid`).
@@ -26,8 +29,17 @@
 10. **Array Type Poisoning**: `hashtags: [12345]` -> `PERMISSION_DENIED` (`hashtags[0] is string` fails).
 11. **Immutable Owner Tampering**: Owner tries to change `authorId` or `createdAt` during `update` -> `PERMISSION_DENIED`.
 12. **Private Clip Scraping**: Non-owner queries `clips` with `visibility: "private"` -> `PERMISSION_DENIED` (`allow list` requires `visibility == 'public' || authorId == request.auth.uid`).
-13. **Report Scraping / Cross-Read**: User attempts `get` or `list` on `/reports/{reportId}` -> `PERMISSION_DENIED` (`allow get, list: if false`).
+13. **Report Scraping / Cross-Read**: Non-admin user attempts `get` or `list` on `/reports/{reportId}` -> `PERMISSION_DENIED`.
 14. **Self-Block or Spoofed Blocker**: User writes `/users/userA/blocked/userB` with `blockerId != request.auth.uid` or `targetId == userId` -> `PERMISSION_DENIED`.
 15. **Unsafe Video URL Scheme**: Clip created with `videoUrl: "javascript:alert(1)"` -> `PERMISSION_DENIED` (`^https://.*` regex fails).
 16. **DM Eavesdropping**: Non-participant User C reads or writes `/directThreads/uA__uB/messages/m1` -> `PERMISSION_DENIED` (Master Gate fails).
 17. **Status Note Spoofing**: User B updates `/statusNotes/userA` -> `PERMISSION_DENIED` (`isOwner(userId)` fails).
+18. **Live Stream Host Impersonation**: User B creates `/liveStreams/s1` with `hostUid: "userA"` -> `PERMISSION_DENIED`.
+19. **Live Message on Ended Stream**: User writes `/liveStreams/s1/messages/m1` when parent stream `status == 'ended'` -> `PERMISSION_DENIED` (Master Gate fails).
+20. **Live Likes Tampering**: Viewer increments `likesCount` on `/liveStreams/s1` by `+100` -> `PERMISSION_DENIED`.
+21. **Self-Assigned Admin Escalation**: Non-admin writes `/admins/{uid}` -> `PERMISSION_DENIED`.
+22. **Report Status Tampering by Reporter**: User creates `/reports/r1` with `status: "resolved"` or `reviewedBy` -> `PERMISSION_DENIED`.
+23. **Email Spoofing Admin Bypass**: Token with matching owner email but `email_verified: false` reads `/reports` -> `PERMISSION_DENIED`.
+24. **Non-Admin Clip Moderation Delete**: Non-owner non-admin deletes another user's `/clips/c1` -> `PERMISSION_DENIED`.
+25. **Live Config Spoofing**: User B modifies `/liveConfigs/userA` -> `PERMISSION_DENIED` (`isOwner(creatorUid)` fails).
+

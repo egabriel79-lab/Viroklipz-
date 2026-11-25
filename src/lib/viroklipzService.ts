@@ -1,5 +1,6 @@
 import {
   createUserWithEmailAndPassword,
+  deleteUser,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -11,6 +12,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   increment,
   onSnapshot,
   query,
@@ -22,31 +24,39 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
+import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import {
   auth,
   db,
   googleProvider,
   handleFirestoreError,
   OperationType,
+  storage,
 } from './firebase';
 import { deleteClipMediaBlob, saveClipMediaBlob } from './mediaStorage';
 import {
+  ALLOWED_CATEGORIES,
   createSafeId,
   MAX_AUDIO_TITLE_LEN,
+  MAX_BIO_COLOR_LEN,
   MAX_BIO_LEN,
   MAX_CAPTION_LEN,
   MAX_COMMENT_LEN,
   MAX_DISPLAY_NAME_LEN,
   MAX_EMAIL_LEN,
+  MAX_FCM_TOKEN_LEN,
   MAX_HASHTAGS,
   MAX_NAME_PART_LEN,
   MAX_NOTE_LEN,
+  MAX_PERSONAL_LINK_LEN,
   MAX_PHONE_LEN,
+  MAX_PRONOUNS_LEN,
   MAX_REPORT_DETAILS_LEN,
   MAX_VIDEO_FILE_BYTES,
   MAX_VISUAL_PRESET_LEN,
   sanitizeAvatarUrl,
   sanitizeMediaUrl,
+  sanitizePersonalLink,
   sanitizeUsername,
 } from './validation';
 import type {
@@ -58,9 +68,18 @@ import type {
   ClipComment,
   ClipItem,
   ClipVisibility,
+  CommunityChatMessage,
   CreatorSummary,
   DirectMessage,
   DirectThread,
+  AudienceFavorite,
+  CreatorLiveConfig,
+  FanClubPerk,
+  LiveAudience,
+  LiveQuality,
+  LiveStreamMessage,
+  LiveStreamRecord,
+  LiveVisualEffect,
   PresenceStatus,
   ReportReason,
   ReportTargetType,
@@ -68,7 +87,17 @@ import type {
   UserPrivateInfo,
   UserProfile,
   UserStreak,
+  VipAlertStyle,
 } from '../types/viroklipz';
+import {
+  DEFAULT_AUDIENCE_FAVORITES,
+  DEFAULT_FAN_CLUB_NAME,
+  DEFAULT_FAN_PERKS,
+  DEFAULT_FAN_POINTS_PER_COIN,
+  DEFAULT_VIP_ALERT_CONFIG,
+  normalizeFanLevelThreshold,
+  resolveFanLevel,
+} from './liveGifts';
 
 const actionTimestamps = new Map<string, number>();
 
@@ -81,7 +110,15 @@ function assertCooldown(actionKey: string, cooldownMs: number, waitMsg: string):
   actionTimestamps.set(actionKey, now);
 }
 
-async function uploadClipToR2IfConfigured(clipId: string, blob: Blob): Promise<string | null> {
+function toCleanArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+async function uploadClipToR2IfConfigured(
+  clipId: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<string | null> {
   const rawEndpoint = String(import.meta.env.VITE_R2_UPLOAD_ENDPOINT || '').trim();
   if (!rawEndpoint) return null;
   let parsed: URL;
@@ -93,19 +130,29 @@ async function uploadClipToR2IfConfigured(clipId: string, blob: Blob): Promise<s
   if (parsed.protocol !== 'https:') {
     throw new Error('El endpoint de Cloudflare R2 debe usar HTTPS.');
   }
-  if (blob.size > MAX_VIDEO_FILE_BYTES) {
+  if (bytes.byteLength > MAX_VIDEO_FILE_BYTES) {
     throw new Error('El archivo supera el límite permitido para subir.');
   }
+  const safeBlob = new Blob([toCleanArrayBuffer(bytes)], { type: mimeType || 'video/mp4' });
+  const ext = mimeType.includes('image/png')
+    ? 'png'
+    : mimeType.includes('image/webp')
+      ? 'webp'
+      : mimeType.includes('image/')
+        ? 'jpg'
+        : mimeType.includes('mp4')
+          ? 'mp4'
+          : 'webm';
   const form = new FormData();
   form.append('clipId', clipId);
-  form.append('file', blob, `${clipId}.webm`);
+  form.append('file', safeBlob, `${clipId}.${ext}`);
 
   const response = await fetch(parsed.toString(), {
     method: 'POST',
     body: form,
   });
   if (!response.ok) {
-    throw new Error('No se pudo subir el video a Cloudflare R2.');
+    throw new Error('No se pudo subir el archivo a Cloudflare R2.');
   }
   const json = (await response.json()) as { url?: unknown };
   const cleanUrl = sanitizeMediaUrl(typeof json.url === 'string' ? json.url : '');
@@ -113,6 +160,33 @@ async function uploadClipToR2IfConfigured(clipId: string, blob: Blob): Promise<s
     throw new Error('El endpoint de almacenamiento devolvió una URL inválida.');
   }
   return cleanUrl;
+}
+
+async function uploadClipBytesToFirebaseStorage(
+  uid: string,
+  clipId: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<string | null> {
+  if (!storage || !auth.currentUser) return null;
+  try {
+    const objectRef = storageRef(storage, `clips/${uid}/${clipId}`);
+    const uploadPromise = uploadBytes(objectRef, bytes, {
+      contentType: mimeType || 'video/mp4',
+    }).then((snap) => getDownloadURL(snap.ref));
+
+    const downloadUrl = await Promise.race([
+      uploadPromise,
+      new Promise<never>((_, reject) => {
+        window.setTimeout(() => reject(new Error('Firebase Storage upload timeout')), 15000);
+      }),
+    ]);
+    const cleanUrl = sanitizeMediaUrl(downloadUrl);
+    return cleanUrl || null;
+  } catch (err) {
+    console.warn('Firebase Storage uploadBytes skipped, falling back to local IndexedDB bytes:', err);
+    return null;
+  }
 }
 
 function toMillis(val: unknown): number {
@@ -129,7 +203,7 @@ function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
     authorDisplayName: String(data.authorDisplayName || 'Creador'),
     authorAvatarUrl: String(data.authorAvatarUrl || ''),
     caption: String(data.caption || ''),
-    category: (data.category || 'arte') as ClipCategory,
+    category: (data.category || 'general') as ClipCategory,
     hashtags: Array.isArray(data.hashtags) ? data.hashtags.map(String) : [],
     audioTitle: String(data.audioTitle || 'Audio original'),
     audioPreset: (data.audioPreset || 'urban_beat') as AudioPreset,
@@ -212,6 +286,18 @@ export async function signOutUser(): Promise<void> {
   await signOut(auth);
 }
 
+function isTransientUnavailableError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const code = 'code' in err ? String((err as { code?: unknown }).code || '') : '';
+  const msg = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase();
+  return (
+    code === 'unavailable' ||
+    code === 'firestore/unavailable' ||
+    msg.includes('client is offline') ||
+    msg.includes('could not reach cloud firestore')
+  );
+}
+
 export async function ensureUserProfile(
   user: User,
   overrides?: { displayName?: string; email?: string },
@@ -223,18 +309,68 @@ export async function ensureUserProfile(
   try {
     snap = await getDoc(userRef);
   } catch (err) {
-    handleFirestoreError(err, OperationType.GET, userPath);
+    if (isTransientUnavailableError(err)) {
+      await new Promise((r) => window.setTimeout(r, 600));
+      try {
+        snap = await getDoc(userRef);
+      } catch (retryErr) {
+        if (isTransientUnavailableError(retryErr)) {
+          const effectiveEmail = (overrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
+          const rawDisplayName = (
+            overrides?.displayName ||
+            user.displayName ||
+            effectiveEmail.split('@')[0] ||
+            'Creador Viroklipz'
+          ).trim();
+          const displayName = rawDisplayName.slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
+          const username = sanitizeUsername(effectiveEmail.split('@')[0] || displayName || 'creador', user.uid);
+          const now = Date.now();
+          return {
+            uid: user.uid,
+            username,
+            displayName,
+            bio: '',
+            avatarUrl: sanitizeAvatarUrl(user.photoURL),
+            isPublic: true,
+            followersCount: 0,
+            createdAtMs: now,
+            updatedAtMs: now,
+          };
+        }
+        handleFirestoreError(retryErr, OperationType.GET, userPath);
+      }
+    } else {
+      handleFirestoreError(err, OperationType.GET, userPath);
+    }
   }
 
   if (snap.exists()) {
     const d = snap.data();
+    const rawPresence = String(d.presenceStatus || 'online');
+    const presenceStatus: PresenceStatus =
+      rawPresence === 'busy' || rawPresence === 'hidden' ? rawPresence : 'online';
     return {
       uid: String(d.uid || user.uid),
       username: String(d.username || sanitizeUsername(user.email?.split('@')[0] || 'creador', user.uid)),
       displayName: String(d.displayName || overrides?.displayName || user.displayName || 'Creador'),
       bio: String(d.bio || ''),
+      bioColor: typeof d.bioColor === 'string' && d.bioColor ? d.bioColor : '#FFFFFF',
+      personalLink: typeof d.personalLink === 'string' ? d.personalLink : '',
+      pronouns: typeof d.pronouns === 'string' ? d.pronouns : '',
       avatarUrl: String(d.avatarUrl || ''),
       isPublic: Boolean(d.isPublic ?? true),
+      followersCount: typeof d.followersCount === 'number' ? d.followersCount : 0,
+      fcmTokenWeb: typeof d.fcmTokenWeb === 'string' ? d.fcmTokenWeb : undefined,
+      presenceStatus,
+      mutedCommunityChat: Boolean(d.mutedCommunityChat ?? false),
+      fanLevel:
+        typeof d.fanLevel === 'number' && Number.isFinite(d.fanLevel)
+          ? Math.min(50, Math.max(1, Math.floor(d.fanLevel)))
+          : 1,
+      fanPoints:
+        typeof d.fanPoints === 'number' && Number.isFinite(d.fanPoints)
+          ? Math.max(0, Math.floor(d.fanPoints))
+          : 0,
       createdAtMs: toMillis(d.createdAt),
       updatedAtMs: toMillis(d.updatedAt),
     };
@@ -283,6 +419,7 @@ export async function ensureUserProfile(
     bio: '',
     avatarUrl,
     isPublic: true,
+    followersCount: 0,
     createdAtMs: now,
     updatedAtMs: now,
   };
@@ -290,18 +427,58 @@ export async function ensureUserProfile(
 
 export async function updateUserProfile(
   uid: string,
-  updates: { username: string; displayName: string; bio: string },
+  updates: {
+    username: string;
+    displayName: string;
+    bio: string;
+    bioColor?: string;
+    personalLink?: string;
+    pronouns?: string;
+  },
 ): Promise<void> {
   const path = `users/${uid}`;
+  const cleanUsername = sanitizeUsername(updates.username, uid);
+  const cleanDisplayName =
+    updates.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
+  const payload: Record<string, unknown> = {
+    username: cleanUsername,
+    displayName: cleanDisplayName,
+    bio: updates.bio.trim().slice(0, MAX_BIO_LEN),
+    updatedAt: serverTimestamp(),
+  };
+  if (updates.bioColor !== undefined) {
+    payload.bioColor = updates.bioColor.trim().slice(0, MAX_BIO_COLOR_LEN) || '#FFFFFF';
+  }
+  if (updates.personalLink !== undefined) {
+    payload.personalLink = sanitizePersonalLink(updates.personalLink).slice(0, MAX_PERSONAL_LINK_LEN);
+  }
+  if (updates.pronouns !== undefined) {
+    payload.pronouns = updates.pronouns.trim().slice(0, MAX_PRONOUNS_LEN);
+  }
   try {
-    await updateDoc(doc(db, 'users', uid), {
-      username: sanitizeUsername(updates.username, uid),
-      displayName: updates.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN),
-      bio: updates.bio.trim().slice(0, MAX_BIO_LEN),
-      updatedAt: serverTimestamp(),
-    });
+    await updateDoc(doc(db, 'users', uid), payload);
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+
+  try {
+    const clipsSnap = await getDocs(query(collection(db, 'clips'), where('authorId', '==', uid)));
+    if (!clipsSnap.empty) {
+      const docs = clipsSnap.docs;
+      for (let i = 0; i < docs.length; i += 400) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + 400).forEach((clipDoc) => {
+          batch.update(clipDoc.ref, {
+            authorDisplayName: cleanDisplayName,
+            authorUsername: cleanUsername,
+            updatedAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+    }
+  } catch (syncErr) {
+    console.warn('No se pudieron sincronizar los klips tras actualizar perfil:', syncErr);
   }
 }
 
@@ -700,6 +877,8 @@ export async function publishClip(
     durationSec: number;
     visibility: ClipVisibility;
     mediaBlob?: Blob | null;
+    mediaBytes?: Uint8Array | null;
+    mediaMimeType?: string;
   },
 ): Promise<string> {
   assertCooldown('publishClip', 5000, 'Espera unos segundos antes de publicar otro klip.');
@@ -707,25 +886,49 @@ export async function publishClip(
   let hasLocalMedia = false;
   let videoUrl = '';
 
-  if (input.mediaBlob) {
-    if (input.mediaBlob.size > MAX_VIDEO_FILE_BYTES) {
-      throw new Error('El video supera el límite máximo permitido.');
+  const resolvedMime =
+    input.mediaMimeType || (input.mediaBlob?.type ? input.mediaBlob.type : 'video/mp4');
+  const resolvedBytes =
+    input.mediaBytes && input.mediaBytes.byteLength > 0
+      ? input.mediaBytes
+      : input.mediaBlob
+        ? new Uint8Array(await input.mediaBlob.arrayBuffer())
+        : null;
+
+  if (resolvedBytes && resolvedBytes.byteLength > 0) {
+    if (resolvedBytes.byteLength > MAX_VIDEO_FILE_BYTES) {
+      throw new Error('El archivo supera el límite máximo permitido.');
     }
-    const cloudUrl = await uploadClipToR2IfConfigured(clipId, input.mediaBlob);
-    if (cloudUrl) {
-      videoUrl = cloudUrl;
+    const r2Url = await uploadClipToR2IfConfigured(clipId, resolvedBytes, resolvedMime);
+    if (r2Url) {
+      videoUrl = r2Url;
     } else {
-      await Promise.race([
-        saveClipMediaBlob(clipId, input.mediaBlob),
-        new Promise<never>((_, reject) => {
-          window.setTimeout(() => reject(new Error('Timeout saving local video')), 12000);
-        }),
-      ]);
-      hasLocalMedia = true;
+      const firebaseStorageUrl = await uploadClipBytesToFirebaseStorage(
+        profile.uid,
+        clipId,
+        resolvedBytes,
+        resolvedMime,
+      );
+      if (firebaseStorageUrl) {
+        videoUrl = firebaseStorageUrl;
+      } else {
+        await Promise.race([
+          saveClipMediaBlob(clipId, resolvedBytes, resolvedMime),
+          new Promise<never>((_, reject) => {
+            window.setTimeout(() => reject(new Error('Timeout saving local media')), 12000);
+          }),
+        ]);
+        hasLocalMedia = true;
+      }
     }
   }
 
   const resolvedAudioTitle = (input.audioTitle.trim() || 'Audio original').slice(0, MAX_AUDIO_TITLE_LEN);
+  const resolvedCategory: ClipCategory =
+    input.category && ALLOWED_CATEGORIES.includes(input.category) ? input.category : 'general';
+  const resolvedVisibility: ClipVisibility =
+    input.visibility === 'private' ? 'private' : 'public';
+  const resolvedCaption = input.caption.trim().slice(0, MAX_CAPTION_LEN);
   const path = `clips/${clipId}`;
   try {
     await setDoc(doc(db, 'clips', clipId), {
@@ -734,8 +937,8 @@ export async function publishClip(
       authorUsername: sanitizeUsername(profile.username, profile.uid),
       authorDisplayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
       authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
-      caption: input.caption.trim().slice(0, MAX_CAPTION_LEN),
-      category: input.category,
+      caption: resolvedCaption,
+      category: resolvedCategory,
       hashtags: input.hashtags.slice(0, MAX_HASHTAGS),
       audioTitle: resolvedAudioTitle,
       audioPreset: input.audioPreset,
@@ -743,7 +946,7 @@ export async function publishClip(
       videoUrl,
       durationSec: Math.min(60, Math.max(3, Math.round(input.durationSec))),
       hasLocalMedia,
-      visibility: input.visibility,
+      visibility: resolvedVisibility,
       likesCount: 0,
       bookmarksCount: 0,
       viewsCount: 0,
@@ -944,6 +1147,97 @@ export async function deleteChatMessage(
   }
 }
 
+export function subscribeCommunityChat(
+  onData: (messages: CommunityChatMessage[]) => void,
+): Unsubscribe {
+  const path = 'community_chat';
+  const q = query(
+    collection(db, 'community_chat'),
+    where('roomId', '==', 'community'),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: CommunityChatMessage[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: String(data.id || d.id),
+          roomId: 'community',
+          authorId: String(data.authorId || ''),
+          authorUsername: String(data.authorUsername || 'creador'),
+          authorAvatarUrl: String(data.authorAvatarUrl || ''),
+          text: String(data.text || ''),
+          createdAtMs: toMillis(data.createdAt),
+        };
+      });
+      items.sort((a, b) => a.createdAtMs - b.createdAtMs);
+      onData(items.slice(-100));
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, path),
+  );
+}
+
+export async function sendCommunityChatMessage(
+  profile: UserProfile,
+  text: string,
+): Promise<void> {
+  assertCooldown('communityChat', 1200, 'Espera un momento antes de enviar otro mensaje.');
+  const messageId = createSafeId('cmsg');
+  const path = `community_chat/${messageId}`;
+  try {
+    await setDoc(doc(db, 'community_chat', messageId), {
+      id: messageId,
+      roomId: 'community',
+      authorId: profile.uid,
+      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
+      text: text.trim().slice(0, MAX_COMMENT_LEN),
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function deleteCommunityChatMessage(messageId: string): Promise<void> {
+  const path = `community_chat/${messageId}`;
+  try {
+    await deleteDoc(doc(db, 'community_chat', messageId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function updateUserPresenceStatus(
+  uid: string,
+  presenceStatus: PresenceStatus,
+): Promise<void> {
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      presenceStatus,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function updateCommunityChatMute(
+  uid: string,
+  mutedCommunityChat: boolean,
+): Promise<void> {
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      mutedCommunityChat,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
 export function subscribeUserBlocked(
   uid: string,
   onData: (blocked: BlockedUserEntry[]) => void,
@@ -1010,8 +1304,10 @@ export async function submitContentReport(input: {
     await setDoc(doc(db, 'reports', reportId), {
       id: reportId,
       reporterId: input.reporterId,
+      reporterUid: input.reporterId,
       targetType: input.targetType,
       targetId: input.targetId,
+      ...(input.targetType === 'clip' ? { videoId: input.targetId } : {}),
       targetAuthorId: input.targetAuthorId,
       reason: input.reason,
       details: input.details.trim().slice(0, MAX_REPORT_DETAILS_LEN),
@@ -1020,6 +1316,91 @@ export async function submitContentReport(input: {
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, path);
   }
+}
+
+export async function saveUserFcmTokenWeb(uid: string, token: string): Promise<void> {
+  const cleanToken = token.trim().slice(0, MAX_FCM_TOKEN_LEN);
+  if (!cleanToken) return;
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      fcmTokenWeb: cleanToken,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export function subscribeHashtagSearchClips(
+  hashtag: string,
+  onData: (clips: ClipItem[]) => void,
+): Unsubscribe {
+  const cleanTag = hashtag.replace(/^#+/, '').trim().toLowerCase();
+  if (!cleanTag) {
+    onData([]);
+    return () => {};
+  }
+  const q = query(
+    collection(db, 'clips'),
+    where('visibility', '==', 'public'),
+    where('hashtags', 'array-contains', cleanTag),
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: ClipItem[] = snapshot.docs.map((d) =>
+        mapClipDoc(d.id, d.data() as Record<string, unknown>),
+      );
+      items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+      onData(items);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'clips');
+    },
+  );
+}
+
+export function subscribeUsernamePrefixSearch(
+  rawText: string,
+  onData: (users: CreatorSummary[]) => void,
+): Unsubscribe {
+  const cleanPrefix = rawText.trim().toLowerCase().replace(/^@+/, '');
+  if (!cleanPrefix) {
+    onData([]);
+    return () => {};
+  }
+  const q = query(
+    collection(db, 'users'),
+    where('isPublic', '==', true),
+    where('username', '>=', cleanPrefix),
+    where('username', '<=', `${cleanPrefix}\uf8ff`),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: CreatorSummary[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          uid: String(data.uid || d.id),
+          username: String(data.username || 'creador'),
+          displayName: String(data.displayName || 'Creador'),
+          bio: String(data.bio || 'Creador en Viroklipz'),
+          avatarUrl: String(data.avatarUrl || ''),
+          followersLabel:
+            typeof data.followersCount === 'number' && data.followersCount > 0
+              ? String(data.followersCount)
+              : '',
+          fanLevel:
+            typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
+              ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
+              : 1,
+        };
+      });
+      onData(items);
+    },
+    (err) => handleFirestoreError(err, OperationType.LIST, 'users'),
+  );
 }
 
 export function buildDirectThreadId(uidA: string, uidB: string): string {
@@ -1045,6 +1426,10 @@ export function subscribePublicUsers(
           bio: String(data.bio || 'Creador en Viroklipz'),
           avatarUrl: String(data.avatarUrl || ''),
           followersLabel: '',
+          fanLevel:
+            typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
+              ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
+              : 1,
         };
       });
       onData(items);
@@ -1116,6 +1501,42 @@ export async function deleteStatusNote(uid: string): Promise<void> {
   }
 }
 
+function getCalendarDayDiff(fromMs: number, toMs: number): number | null {
+  if (!fromMs) return null;
+  const fromDate = new Date(fromMs);
+  const toDate = new Date(toMs);
+  const fromDayUtc = Date.UTC(
+    fromDate.getFullYear(),
+    fromDate.getMonth(),
+    fromDate.getDate(),
+  );
+  const toDayUtc = Date.UTC(
+    toDate.getFullYear(),
+    toDate.getMonth(),
+    toDate.getDate(),
+  );
+  return Math.round((toDayUtc - fromDayUtc) / 86_400_000);
+}
+
+function computeNextChatStreak(
+  prevStreakVal: unknown,
+  lastMessageDateVal: unknown,
+): number {
+  const prevStreak =
+    typeof prevStreakVal === 'number' && Number.isFinite(prevStreakVal)
+      ? Math.max(0, Math.floor(prevStreakVal))
+      : 0;
+  const lastMs = toMillis(lastMessageDateVal);
+  const diffDays = getCalendarDayDiff(lastMs, Date.now());
+  if (diffDays === null || diffDays > 1 || diffDays < 0) {
+    return 1;
+  }
+  if (diffDays === 1) {
+    return prevStreak + 1;
+  }
+  return prevStreak;
+}
+
 export function subscribeUserDirectThreads(
   uid: string,
   onData: (threads: DirectThread[]) => void,
@@ -1137,6 +1558,8 @@ export function subscribeUserDirectThreads(
           participantIds: [rawParticipants[0] || '', rawParticipants[1] || ''],
           lastMessageText: String(data.lastMessageText || ''),
           lastSenderId: String(data.lastSenderId || ''),
+          streak: typeof data.streak === 'number' ? data.streak : 0,
+          lastMessageDateMs: toMillis(data.lastMessageDate),
           createdAtMs: toMillis(data.createdAt),
           updatedAtMs: toMillis(data.updatedAt),
         };
@@ -1183,7 +1606,7 @@ export async function sendDirectMessage(
   profile: UserProfile,
   targetUserId: string,
   text: string,
-  knownThreadExists: boolean,
+  _knownThreadExists: boolean,
 ): Promise<string> {
   assertCooldown('directMessage', 900, 'Espera un momento antes de enviar otro mensaje.');
   const cleanTarget = targetUserId.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -1195,10 +1618,26 @@ export async function sendDirectMessage(
   const cleanText = text.trim().slice(0, MAX_COMMENT_LEN);
 
   try {
-    if (knownThreadExists) {
+    let existingSnapData: Record<string, unknown> | null = null;
+    try {
+      const snap = await getDoc(threadRef);
+      if (snap.exists()) {
+        existingSnapData = snap.data();
+      }
+    } catch {
+      existingSnapData = null;
+    }
+
+    if (existingSnapData) {
+      const nextStreak = computeNextChatStreak(
+        existingSnapData.streak,
+        existingSnapData.lastMessageDate ?? existingSnapData.updatedAt,
+      );
       await updateDoc(threadRef, {
         lastMessageText: cleanText,
         lastSenderId: profile.uid,
+        streak: nextStreak,
+        lastMessageDate: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } else {
@@ -1208,13 +1647,25 @@ export async function sendDirectMessage(
           participantIds: [profile.uid, cleanTarget].sort(),
           lastMessageText: cleanText,
           lastSenderId: profile.uid,
+          streak: 1,
+          lastMessageDate: serverTimestamp(),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
       } catch {
+        const snapRetry = await getDoc(threadRef).catch(() => null);
+        const retryData = snapRetry?.exists() ? snapRetry.data() : null;
+        const nextStreak = retryData
+          ? computeNextChatStreak(
+              retryData.streak,
+              retryData.lastMessageDate ?? retryData.updatedAt,
+            )
+          : 1;
         await updateDoc(threadRef, {
           lastMessageText: cleanText,
           lastSenderId: profile.uid,
+          streak: nextStreak,
+          lastMessageDate: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
       }
@@ -1247,3 +1698,736 @@ export async function deleteDirectMessage(
     handleFirestoreError(err, OperationType.DELETE, path);
   }
 }
+
+export async function deleteUserAccount(uid: string): Promise<void> {
+  const current = auth.currentUser;
+  if (!current || current.uid !== uid) {
+    throw new Error('Debes iniciar sesión para eliminar tu cuenta.');
+  }
+
+  await Promise.allSettled([
+    deleteDoc(doc(db, 'users', uid, 'private', 'info')),
+    deleteDoc(doc(db, 'users', uid, 'private', 'streak')),
+    deleteDoc(doc(db, 'statusNotes', uid)),
+    deleteDoc(doc(db, 'users', uid)),
+    deleteClipMediaBlob(`avatar_${uid}`),
+    deleteClipMediaBlob(`banner_${uid}`),
+  ]);
+
+  try {
+    await deleteUser(current);
+  } catch (err: unknown) {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: string }).code)
+        : '';
+    if (code === 'auth/requires-recent-login') {
+      throw new Error(
+        'Por seguridad, cierra sesión, vuelve a iniciar sesión e inténtalo de nuevo para eliminar tu cuenta.',
+      );
+    }
+    throw err;
+  }
+}
+
+function sanitizeLivePreviewUrl(raw: string | null | undefined): string {
+  if (!raw) return '/src/assets/images/clip_urban_dance_1795372621458.jpg';
+  const trimmed = raw.trim();
+  if (trimmed.length > 300) return '/src/assets/images/clip_urban_dance_1795372621458.jpg';
+  if (trimmed.startsWith('/src/assets/') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return '/src/assets/images/clip_urban_dance_1795372621458.jpg';
+}
+
+function sanitizeFanPerksList(raw: unknown): FanClubPerk[] {
+  if (!Array.isArray(raw)) return [];
+  const items: FanClubPerk[] = [];
+  for (const entry of raw.slice(0, 12)) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const obj = entry as Record<string, unknown>;
+    const title = String(obj.title || '').trim().slice(0, 60);
+    if (!title) continue;
+    items.push({
+      id: String(obj.id || createSafeId('perk')).slice(0, 48),
+      title,
+      minLevel: normalizeFanLevelThreshold(obj.minLevel),
+    });
+  }
+  return items;
+}
+
+function sanitizeAudienceFavoritesList(raw: unknown): AudienceFavorite[] {
+  if (!Array.isArray(raw)) return [];
+  const items: AudienceFavorite[] = [];
+  for (const entry of raw.slice(0, 12)) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const obj = entry as Record<string, unknown>;
+    const action = String(obj.action || '').trim().slice(0, 80);
+    const giftId = String(obj.giftId || '').trim().slice(0, 32);
+    const giftName = String(obj.giftName || '').trim().slice(0, 40);
+    const coins = Math.max(1, Math.min(100000, Math.round(Number(obj.coins || 10))));
+    if (!action || !giftId || !giftName) continue;
+    items.push({
+      id: String(obj.id || createSafeId('fav')).slice(0, 48),
+      action,
+      giftId,
+      giftName,
+      coins,
+    });
+  }
+  return items;
+}
+
+function sanitizeFanClubName(raw: unknown): string {
+  const clean = typeof raw === 'string' ? raw.trim().slice(0, 36) : '';
+  return clean || DEFAULT_FAN_CLUB_NAME;
+}
+
+function sanitizeFanPointsPerCoin(raw: unknown): number {
+  const n = Math.round(Number(raw || DEFAULT_FAN_POINTS_PER_COIN));
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_FAN_POINTS_PER_COIN;
+  return Math.min(20, n);
+}
+
+function sanitizeVipAlertTitle(raw: unknown): string {
+  const clean = typeof raw === 'string' ? raw.trim().slice(0, 40) : '';
+  return clean || DEFAULT_VIP_ALERT_CONFIG.vipAlertTitle;
+}
+
+function sanitizeVipAlertStyle(raw: unknown): VipAlertStyle {
+  if (raw === 'electric_pulse' || raw === 'aurora_vip') return raw;
+  return 'crystal_magenta';
+}
+
+function sanitizeVipAlertDuration(raw: unknown): number {
+  const n = Math.round(Number(raw || DEFAULT_VIP_ALERT_CONFIG.vipAlertDurationSec));
+  if (!Number.isFinite(n) || n < 3) return DEFAULT_VIP_ALERT_CONFIG.vipAlertDurationSec;
+  return Math.min(10, n);
+}
+
+export async function updateUserFanLevelConfig(
+  uid: string,
+  input: { fanLevel: number; fanPoints?: number },
+): Promise<{ fanLevel: number; fanPoints: number }> {
+  if (!uid || !auth.currentUser || auth.currentUser.uid !== uid) {
+    throw new Error('Inicia sesión para configurar tu nivel de fan.');
+  }
+  const safeLevel = Math.min(50, Math.max(1, Math.round(Number(input.fanLevel || 1))));
+  const minPointsForLevel = Math.max(0, (safeLevel - 1) * 50);
+  const safePoints =
+    typeof input.fanPoints === 'number' && Number.isFinite(input.fanPoints)
+      ? Math.min(10_000_000, Math.max(minPointsForLevel, Math.round(input.fanPoints)))
+      : minPointsForLevel;
+
+  const path = `users/${uid}`;
+  try {
+    await updateDoc(doc(db, 'users', uid), {
+      fanLevel: safeLevel,
+      fanPoints: safePoints,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+  return { fanLevel: safeLevel, fanPoints: safePoints };
+}
+
+export function subscribeCreatorLiveConfig(
+  creatorUid: string,
+  onData: (config: CreatorLiveConfig) => void,
+): Unsubscribe {
+  if (!creatorUid) {
+    return () => {};
+  }
+  const ref = doc(db, 'liveConfigs', creatorUid);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (!snap.exists()) {
+        onData({
+          creatorUid,
+          fanPerks: DEFAULT_FAN_PERKS,
+          audienceFavorites: DEFAULT_AUDIENCE_FAVORITES,
+          fanClubName: DEFAULT_FAN_CLUB_NAME,
+          fanPointsPerCoin: DEFAULT_FAN_POINTS_PER_COIN,
+          vipAlertEnabled: DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
+          vipAlertTitle: DEFAULT_VIP_ALERT_CONFIG.vipAlertTitle,
+          vipAlertStyle: DEFAULT_VIP_ALERT_CONFIG.vipAlertStyle,
+          vipAlertDurationSec: DEFAULT_VIP_ALERT_CONFIG.vipAlertDurationSec,
+          vipAlertSound: DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
+          updatedAtMs: Date.now(),
+        });
+        return;
+      }
+      const d = snap.data();
+      onData({
+        creatorUid: String(d.creatorUid || creatorUid),
+        fanPerks: sanitizeFanPerksList(d.fanPerks),
+        audienceFavorites: sanitizeAudienceFavoritesList(d.audienceFavorites),
+        fanClubName: sanitizeFanClubName(d.fanClubName),
+        fanPointsPerCoin: sanitizeFanPointsPerCoin(d.fanPointsPerCoin),
+        vipAlertEnabled:
+          typeof d.vipAlertEnabled === 'boolean'
+            ? d.vipAlertEnabled
+            : DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
+        vipAlertTitle: sanitizeVipAlertTitle(d.vipAlertTitle),
+        vipAlertStyle: sanitizeVipAlertStyle(d.vipAlertStyle),
+        vipAlertDurationSec: sanitizeVipAlertDuration(d.vipAlertDurationSec),
+        vipAlertSound:
+          typeof d.vipAlertSound === 'boolean'
+            ? d.vipAlertSound
+            : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
+        updatedAtMs: toMillis(d.updatedAt),
+      });
+    },
+    (err) => {
+      console.warn('No se pudo leer liveConfigs:', creatorUid, err);
+      onData({
+        creatorUid,
+        fanPerks: DEFAULT_FAN_PERKS,
+        audienceFavorites: DEFAULT_AUDIENCE_FAVORITES,
+        fanClubName: DEFAULT_FAN_CLUB_NAME,
+        fanPointsPerCoin: DEFAULT_FAN_POINTS_PER_COIN,
+        vipAlertEnabled: DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
+        vipAlertTitle: DEFAULT_VIP_ALERT_CONFIG.vipAlertTitle,
+        vipAlertStyle: DEFAULT_VIP_ALERT_CONFIG.vipAlertStyle,
+        vipAlertDurationSec: DEFAULT_VIP_ALERT_CONFIG.vipAlertDurationSec,
+        vipAlertSound: DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
+        updatedAtMs: Date.now(),
+      });
+    },
+  );
+}
+
+export async function saveCreatorLiveConfig(
+  creatorUid: string,
+  input: {
+    fanPerks: FanClubPerk[];
+    audienceFavorites: AudienceFavorite[];
+    fanClubName?: string;
+    fanPointsPerCoin?: number;
+    vipAlertEnabled?: boolean;
+    vipAlertTitle?: string;
+    vipAlertStyle?: VipAlertStyle;
+    vipAlertDurationSec?: number;
+    vipAlertSound?: boolean;
+  },
+): Promise<void> {
+  if (!creatorUid || !auth.currentUser || auth.currentUser.uid !== creatorUid) {
+    throw new Error('Inicia sesión como anfitrión para guardar esta configuración.');
+  }
+  const path = `liveConfigs/${creatorUid}`;
+  const fanPerks = sanitizeFanPerksList(input.fanPerks);
+  const audienceFavorites = sanitizeAudienceFavoritesList(input.audienceFavorites);
+  const fanClubName = sanitizeFanClubName(input.fanClubName);
+  const fanPointsPerCoin = sanitizeFanPointsPerCoin(input.fanPointsPerCoin);
+  const vipAlertEnabled =
+    typeof input.vipAlertEnabled === 'boolean'
+      ? input.vipAlertEnabled
+      : DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled;
+  const vipAlertTitle = sanitizeVipAlertTitle(input.vipAlertTitle);
+  const vipAlertStyle = sanitizeVipAlertStyle(input.vipAlertStyle);
+  const vipAlertDurationSec = sanitizeVipAlertDuration(input.vipAlertDurationSec);
+  const vipAlertSound =
+    typeof input.vipAlertSound === 'boolean'
+      ? input.vipAlertSound
+      : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound;
+
+  try {
+    await setDoc(doc(db, 'liveConfigs', creatorUid), {
+      creatorUid,
+      fanPerks,
+      audienceFavorites,
+      fanClubName,
+      fanPointsPerCoin,
+      vipAlertEnabled,
+      vipAlertTitle,
+      vipAlertStyle,
+      vipAlertDurationSec,
+      vipAlertSound,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeActiveLiveStreams(
+  onData: (streams: LiveStreamRecord[]) => void,
+): Unsubscribe {
+  const q = query(collection(db, 'liveStreams'), where('status', '==', 'live'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: LiveStreamRecord[] = snapshot.docs.map((d) => {
+        const data = d.data();
+        const rawAudience = String(data.audience || 'public');
+        const rawQuality = String(data.quality || '720p');
+        const rawEffect = String(data.visualEffect || 'none');
+        return {
+          id: String(data.id || d.id),
+          hostUid: String(data.hostUid || ''),
+          hostUsername: String(data.hostUsername || 'creador'),
+          hostDisplayName: String(data.hostDisplayName || 'Creador'),
+          hostAvatarUrl: String(data.hostAvatarUrl || ''),
+          title: String(data.title || 'En vivo en Viroklipz'),
+          about: typeof data.about === 'string' ? data.about : '',
+          audience: rawAudience === 'friends' ? 'friends' : 'public',
+          quality: rawQuality === '1080p' ? '1080p' : '720p',
+          visualEffect: (
+            ['none', 'neon_purple', 'electric_blue', 'magenta_glow', 'noir'].includes(rawEffect)
+              ? rawEffect
+              : 'none'
+          ) as LiveVisualEffect,
+          category: (data.category || 'general') as ClipCategory,
+          previewImageUrl: String(data.previewImageUrl || ''),
+          streamUrl: sanitizeMediaUrl(typeof data.streamUrl === 'string' ? data.streamUrl : ''),
+          guestUid: typeof data.guestUid === 'string' ? data.guestUid : '',
+          guestDisplayName: typeof data.guestDisplayName === 'string' ? data.guestDisplayName : '',
+          guestStreamUrl: sanitizeMediaUrl(
+            typeof data.guestStreamUrl === 'string' ? data.guestStreamUrl : '',
+          ),
+          audioPreset: (data.audioPreset || 'urban_beat') as AudioPreset,
+          status: data.status === 'ended' ? 'ended' : 'live',
+          viewerCount: Math.max(1, Number(data.viewerCount || 1)),
+          likesCount: Math.max(0, Number(data.likesCount || 0)),
+          giftsCount: Math.max(0, Number(data.giftsCount || 0)),
+          fanPerks: sanitizeFanPerksList(data.fanPerks),
+          audienceFavorites: sanitizeAudienceFavoritesList(data.audienceFavorites),
+          fanClubName: sanitizeFanClubName(data.fanClubName),
+          fanPointsPerCoin: sanitizeFanPointsPerCoin(data.fanPointsPerCoin),
+          vipAlertEnabled:
+            typeof data.vipAlertEnabled === 'boolean'
+              ? data.vipAlertEnabled
+              : DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
+          vipAlertTitle: sanitizeVipAlertTitle(data.vipAlertTitle),
+          vipAlertStyle: sanitizeVipAlertStyle(data.vipAlertStyle),
+          vipAlertDurationSec: sanitizeVipAlertDuration(data.vipAlertDurationSec),
+          vipAlertSound:
+            typeof data.vipAlertSound === 'boolean'
+              ? data.vipAlertSound
+              : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
+          startedAtMs: toMillis(data.startedAt),
+          updatedAtMs: toMillis(data.updatedAt),
+        };
+      });
+      items.sort((a, b) => b.startedAtMs - a.startedAtMs);
+      onData(items);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, 'liveStreams');
+    },
+  );
+}
+
+export async function startFirestoreLiveStream(
+  profile: UserProfile,
+  input: {
+    title: string;
+    about?: string;
+    audience?: LiveAudience;
+    quality?: LiveQuality;
+    visualEffect?: LiveVisualEffect;
+    category?: ClipCategory;
+    previewImageUrl?: string;
+    streamUrl?: string;
+    guestUid?: string;
+    guestDisplayName?: string;
+    guestStreamUrl?: string;
+    fanPerks?: FanClubPerk[];
+    audienceFavorites?: AudienceFavorite[];
+    fanClubName?: string;
+    fanPointsPerCoin?: number;
+    vipAlertEnabled?: boolean;
+    vipAlertTitle?: string;
+    vipAlertStyle?: VipAlertStyle;
+    vipAlertDurationSec?: number;
+    vipAlertSound?: boolean;
+    audioPreset?: AudioPreset;
+  },
+): Promise<string> {
+  const streamId = createSafeId('live');
+  const cleanTitle = input.title.trim().slice(0, 80) || 'En vivo en Viroklipz';
+  const cleanAbout = (input.about || '').trim().slice(0, 240);
+  const cleanAudience: LiveAudience = input.audience === 'friends' ? 'friends' : 'public';
+  const cleanQuality: LiveQuality = input.quality === '1080p' ? '1080p' : '720p';
+  const cleanEffect: LiveVisualEffect = input.visualEffect || 'none';
+  const cleanCategory: ClipCategory =
+    input.category && ALLOWED_CATEGORIES.includes(input.category) ? input.category : 'general';
+  const cleanStreamUrl = sanitizeMediaUrl(input.streamUrl);
+  const cleanGuestUid = (input.guestUid || '').trim().slice(0, 128);
+  const cleanGuestDisplayName = (input.guestDisplayName || '').trim().slice(0, MAX_DISPLAY_NAME_LEN);
+  const cleanGuestStreamUrl = sanitizeMediaUrl(input.guestStreamUrl);
+  const fanPerks = sanitizeFanPerksList(input.fanPerks);
+  const audienceFavorites = sanitizeAudienceFavoritesList(input.audienceFavorites);
+  const fanClubName = sanitizeFanClubName(input.fanClubName);
+  const fanPointsPerCoin = sanitizeFanPointsPerCoin(input.fanPointsPerCoin);
+  const vipAlertEnabled =
+    typeof input.vipAlertEnabled === 'boolean'
+      ? input.vipAlertEnabled
+      : DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled;
+  const vipAlertTitle = sanitizeVipAlertTitle(input.vipAlertTitle);
+  const vipAlertStyle = sanitizeVipAlertStyle(input.vipAlertStyle);
+  const vipAlertDurationSec = sanitizeVipAlertDuration(input.vipAlertDurationSec);
+  const vipAlertSound =
+    typeof input.vipAlertSound === 'boolean'
+      ? input.vipAlertSound
+      : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound;
+  const path = `liveStreams/${streamId}`;
+
+  try {
+    await setDoc(doc(db, 'liveStreams', streamId), {
+      id: streamId,
+      hostUid: profile.uid,
+      hostUsername: sanitizeUsername(profile.username, profile.uid),
+      hostDisplayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
+      hostAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
+      title: cleanTitle,
+      about: cleanAbout,
+      audience: cleanAudience,
+      quality: cleanQuality,
+      visualEffect: cleanEffect,
+      category: cleanCategory,
+      previewImageUrl: sanitizeLivePreviewUrl(input.previewImageUrl),
+      streamUrl: cleanStreamUrl,
+      ...(cleanGuestUid ? { guestUid: cleanGuestUid } : {}),
+      ...(cleanGuestDisplayName ? { guestDisplayName: cleanGuestDisplayName } : {}),
+      ...(cleanGuestStreamUrl ? { guestStreamUrl: cleanGuestStreamUrl } : {}),
+      fanPerks,
+      audienceFavorites,
+      fanClubName,
+      fanPointsPerCoin,
+      vipAlertEnabled,
+      vipAlertTitle,
+      vipAlertStyle,
+      vipAlertDurationSec,
+      vipAlertSound,
+      audioPreset: input.audioPreset || 'urban_beat',
+      status: 'live',
+      viewerCount: 1,
+      likesCount: 0,
+      giftsCount: 0,
+      startedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+  return streamId;
+}
+
+export async function updateFirestoreLiveStreamPerksAndFavorites(
+  streamId: string,
+  input: {
+    fanPerks?: FanClubPerk[];
+    audienceFavorites?: AudienceFavorite[];
+    fanClubName?: string;
+    fanPointsPerCoin?: number;
+    vipAlertEnabled?: boolean;
+    vipAlertTitle?: string;
+    vipAlertStyle?: VipAlertStyle;
+    vipAlertDurationSec?: number;
+    vipAlertSound?: boolean;
+  },
+): Promise<void> {
+  if (!streamId) return;
+  const path = `liveStreams/${streamId}`;
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), {
+      ...(input.fanPerks ? { fanPerks: sanitizeFanPerksList(input.fanPerks) } : {}),
+      ...(input.audienceFavorites
+        ? { audienceFavorites: sanitizeAudienceFavoritesList(input.audienceFavorites) }
+        : {}),
+      ...(typeof input.fanClubName === 'string'
+        ? { fanClubName: sanitizeFanClubName(input.fanClubName) }
+        : {}),
+      ...(typeof input.fanPointsPerCoin === 'number'
+        ? { fanPointsPerCoin: sanitizeFanPointsPerCoin(input.fanPointsPerCoin) }
+        : {}),
+      ...(typeof input.vipAlertEnabled === 'boolean'
+        ? { vipAlertEnabled: input.vipAlertEnabled }
+        : {}),
+      ...(typeof input.vipAlertTitle === 'string'
+        ? { vipAlertTitle: sanitizeVipAlertTitle(input.vipAlertTitle) }
+        : {}),
+      ...(input.vipAlertStyle ? { vipAlertStyle: sanitizeVipAlertStyle(input.vipAlertStyle) } : {}),
+      ...(typeof input.vipAlertDurationSec === 'number'
+        ? { vipAlertDurationSec: sanitizeVipAlertDuration(input.vipAlertDurationSec) }
+        : {}),
+      ...(typeof input.vipAlertSound === 'boolean'
+        ? { vipAlertSound: input.vipAlertSound }
+        : {}),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudieron sincronizar ventajas/favoritos del LIVE:', path, err);
+  }
+}
+
+export async function updateFirestoreLiveGuest(
+  streamId: string,
+  guest: { guestUid?: string; guestDisplayName?: string; guestStreamUrl?: string },
+): Promise<void> {
+  if (!streamId) return;
+  const path = `liveStreams/${streamId}`;
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), {
+      guestUid: (guest.guestUid || '').trim().slice(0, 128),
+      guestDisplayName: (guest.guestDisplayName || '').trim().slice(0, MAX_DISPLAY_NAME_LEN),
+      guestStreamUrl: sanitizeMediaUrl(guest.guestStreamUrl),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo actualizar el invitado multijugador del LIVE:', path, err);
+  }
+}
+
+export async function endFirestoreLiveStream(streamId: string): Promise<void> {
+  if (!streamId) return;
+  const path = `liveStreams/${streamId}`;
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), {
+      status: 'ended',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo cerrar el stream en Firestore:', path, err);
+  }
+}
+
+export async function incrementLiveStreamLike(streamId: string): Promise<void> {
+  if (!streamId || !auth.currentUser) return;
+  const path = `liveStreams/${streamId}`;
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), {
+      likesCount: increment(1),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo registrar el me gusta del LIVE:', path, err);
+  }
+}
+
+export async function incrementLiveStreamGift(streamId: string): Promise<void> {
+  if (!streamId || !auth.currentUser) return;
+  const path = `liveStreams/${streamId}`;
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), {
+      giftsCount: increment(1),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo registrar el regalo del LIVE:', path, err);
+  }
+}
+
+export async function adjustLiveStreamViewer(
+  streamId: string,
+  delta: 1 | -1,
+): Promise<void> {
+  if (!streamId || !auth.currentUser) return;
+  const path = `liveStreams/${streamId}`;
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), {
+      viewerCount: increment(delta),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo actualizar espectadores del LIVE:', path, err);
+  }
+}
+
+export function subscribeLiveStreamMessages(
+  streamId: string,
+  onData: (messages: LiveStreamMessage[]) => void,
+): Unsubscribe {
+  const path = `liveStreams/${streamId}/messages`;
+  const q = query(
+    collection(db, 'liveStreams', streamId, 'messages'),
+    where('streamId', '==', streamId),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: LiveStreamMessage[] = snap.docs.map((d) => {
+        const data = d.data();
+        const rawKind = String(data.kind || 'chat');
+        const kind: 'chat' | 'like' | 'gift' =
+          rawKind === 'like' ? 'like' : rawKind === 'gift' ? 'gift' : 'chat';
+        return {
+          id: String(data.id || d.id),
+          streamId: String(data.streamId || streamId),
+          authorId: String(data.authorId || ''),
+          authorUsername: String(data.authorUsername || 'creador'),
+          authorDisplayName: String(data.authorDisplayName || 'Creador'),
+          authorAvatarUrl: String(data.authorAvatarUrl || ''),
+          text: String(data.text || ''),
+          kind,
+          giftId: typeof data.giftId === 'string' ? data.giftId : undefined,
+          giftName: typeof data.giftName === 'string' ? data.giftName : undefined,
+          giftValue: typeof data.giftValue === 'number' ? data.giftValue : undefined,
+          senderFanLevel:
+            typeof data.senderFanLevel === 'number' ? data.senderFanLevel : undefined,
+          triggeredAction:
+            typeof data.triggeredAction === 'string' ? data.triggeredAction : undefined,
+          createdAtMs: toMillis(data.createdAt),
+        };
+      });
+      items.sort((a, b) => a.createdAtMs - b.createdAtMs);
+      onData(items.slice(-50));
+    },
+    (err) => {
+      console.warn('Error leyendo chat del LIVE:', path, err);
+    },
+  );
+}
+
+export async function sendLiveStreamMessage(
+  streamId: string,
+  profile: UserProfile,
+  text: string,
+  kind: 'chat' | 'like' | 'gift' = 'chat',
+  giftMeta?: {
+    giftId?: string;
+    giftName: string;
+    giftValue: number;
+    triggeredAction?: string;
+  },
+): Promise<void> {
+  if (!streamId) return;
+  if (kind === 'chat') {
+    assertCooldown('liveChat', 1000, 'Espera un segundo antes de comentar en el LIVE.');
+  }
+  const messageId = createSafeId('lmsg');
+  const path = `liveStreams/${streamId}/messages/${messageId}`;
+  const cleanText =
+    text.trim().slice(0, 180) ||
+    (kind === 'like'
+      ? 'le dio un me gusta al LIVE'
+      : kind === 'gift'
+        ? `envió un regalo: ${giftMeta?.giftName || 'Viroklipz'}`
+        : '');
+  if (!cleanText) return;
+  const senderFanLevel = resolveFanLevel(profile.fanLevel, profile.fanPoints);
+
+  try {
+    await setDoc(doc(db, 'liveStreams', streamId, 'messages', messageId), {
+      id: messageId,
+      streamId,
+      authorId: profile.uid,
+      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorDisplayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
+      authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
+      text: cleanText,
+      kind,
+      senderFanLevel,
+      ...(giftMeta?.giftId ? { giftId: giftMeta.giftId.slice(0, 32) } : {}),
+      ...(giftMeta?.giftName ? { giftName: giftMeta.giftName.slice(0, 40) } : {}),
+      ...(typeof giftMeta?.giftValue === 'number'
+        ? { giftValue: Math.max(0, Math.min(100000, Math.round(giftMeta.giftValue))) }
+        : {}),
+      ...(giftMeta?.triggeredAction
+        ? { triggeredAction: giftMeta.triggeredAction.slice(0, 80) }
+        : {}),
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function sendLiveStreamGift(
+  streamId: string,
+  profile: UserProfile,
+  gift: { id?: string; name: string; value: number },
+): Promise<{ matchedFavorite: AudienceFavorite | null; newFanLevel: number; vipAlertEnabled: boolean }> {
+  if (!streamId) {
+    return {
+      matchedFavorite: null,
+      newFanLevel: resolveFanLevel(profile.fanLevel, profile.fanPoints),
+      vipAlertEnabled: true,
+    };
+  }
+  assertCooldown('liveGift', 900, 'Espera un segundo antes de enviar otro regalo.');
+
+  // PARTE 3.1: Verify in Firestore whether the gift is linked to an Audience Favorite on this Live
+  let matchedFavorite: AudienceFavorite | null = null;
+  let pointsPerCoin = DEFAULT_FAN_POINTS_PER_COIN;
+  let vipAlertEnabled = true;
+
+  try {
+    const liveSnap = await getDoc(doc(db, 'liveStreams', streamId));
+    if (liveSnap.exists()) {
+      const data = liveSnap.data();
+      let favorites = sanitizeAudienceFavoritesList(data.audienceFavorites);
+      pointsPerCoin = sanitizeFanPointsPerCoin(data.fanPointsPerCoin);
+      vipAlertEnabled =
+        typeof data.vipAlertEnabled === 'boolean' ? data.vipAlertEnabled : true;
+
+      if (typeof data.hostUid === 'string' && data.hostUid) {
+        const cfgSnap = await getDoc(doc(db, 'liveConfigs', data.hostUid)).catch(() => null);
+        if (cfgSnap?.exists()) {
+          const cfgData = cfgSnap.data();
+          if (favorites.length === 0) {
+            favorites = sanitizeAudienceFavoritesList(cfgData.audienceFavorites);
+          }
+          if (typeof data.fanPointsPerCoin !== 'number') {
+            pointsPerCoin = sanitizeFanPointsPerCoin(cfgData.fanPointsPerCoin);
+          }
+          if (typeof data.vipAlertEnabled !== 'boolean' && typeof cfgData.vipAlertEnabled === 'boolean') {
+            vipAlertEnabled = cfgData.vipAlertEnabled;
+          }
+        }
+      }
+      const cleanGiftId = (gift.id || '').toLowerCase();
+      const cleanGiftName = gift.name.trim().toLowerCase();
+      matchedFavorite =
+        favorites.find(
+          (f) =>
+            (cleanGiftId && f.giftId.toLowerCase() === cleanGiftId) ||
+            f.giftName.trim().toLowerCase() === cleanGiftName,
+        ) || null;
+    }
+  } catch (err) {
+    console.warn('No se pudo verificar Favoritos del Público en Firestore:', err);
+  }
+
+  const earnedPoints = Math.max(1, gift.value * pointsPerCoin);
+  const nextFanPoints = Math.min(10_000_000, Math.max(0, (profile.fanPoints || 0) + earnedPoints));
+  const nextFanLevel = Math.min(50, Math.max(1, 1 + Math.floor(nextFanPoints / 50)));
+  const updatedProfile: UserProfile = {
+    ...profile,
+    fanPoints: nextFanPoints,
+    fanLevel: nextFanLevel,
+  };
+
+  await Promise.all([
+    incrementLiveStreamGift(streamId),
+    sendLiveStreamMessage(
+      streamId,
+      updatedProfile,
+      matchedFavorite
+        ? `envió ${gift.name} · Acción: ${matchedFavorite.action}`
+        : `envió ${gift.name} (+${gift.value} monedas)`,
+      'gift',
+      {
+        giftId: gift.id,
+        giftName: gift.name,
+        giftValue: gift.value,
+        triggeredAction: vipAlertEnabled ? matchedFavorite?.action : undefined,
+      },
+    ),
+    updateDoc(doc(db, 'users', profile.uid), {
+      fanPoints: nextFanPoints,
+      fanLevel: nextFanLevel,
+      updatedAt: serverTimestamp(),
+    }).catch((err) => {
+      console.warn('No se pudo actualizar nivel de fan:', err);
+    }),
+  ]);
+
+  return { matchedFavorite: vipAlertEnabled ? matchedFavorite : null, newFanLevel: nextFanLevel, vipAlertEnabled };
+}
+
+

@@ -3,7 +3,6 @@ import {
   Bookmark,
   Check,
   Film,
-  Flag,
   Heart,
   MessageCircle,
   Music2,
@@ -11,35 +10,26 @@ import {
   Play,
   Plus,
   Share2,
-  Trash2,
-  Volume2,
-  VolumeX,
 } from 'lucide-react';
 import { audioEngine } from '../lib/audioEngine';
 import { getClipMediaBlob } from '../lib/mediaStorage';
-import { formatCompactCount } from '../lib/validation';
 import type { ClipItem } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
 
 interface ClipPlayerProps {
   clip: ClipItem;
   isActive: boolean;
-  isMuted: boolean;
   isLiked: boolean;
   isBookmarked: boolean;
   isFollowing: boolean;
   isOwnClip: boolean;
   dataSaver?: boolean;
-  commentsCount: number;
-  onToggleMute: () => void;
   onToggleLike: (forceLike?: boolean) => void;
   onToggleBookmark: () => void;
   onToggleFollow: () => void;
   onOpenComments: () => void;
   onShare: () => void;
   onSelectCreator: (authorId: string) => void;
-  onDeleteClip?: () => void;
-  onReport?: () => void;
 }
 
 interface HeartBurst {
@@ -48,53 +38,40 @@ interface HeartBurst {
   y: number;
 }
 
-function formatSeconds(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const mins = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
-}
-
 export function ClipPlayer({
   clip,
   isActive,
-  isMuted,
   isLiked,
   isBookmarked,
   isFollowing,
   isOwnClip,
   dataSaver = false,
-  commentsCount,
-  onToggleMute,
   onToggleLike,
   onToggleBookmark,
   onToggleFollow,
   onOpenComments,
   onShare,
   onSelectCreator,
-  onDeleteClip,
-  onReport,
 }: ClipPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(true);
-  const [progressSec, setProgressSec] = useState(0);
-  const [durationSec, setDurationSec] = useState(clip.durationSec || 15);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
+  const [localMediaIsImage, setLocalMediaIsImage] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
   const [playIndicator, setPlayIndicator] = useState<'play' | 'pause' | null>(null);
   const [heartBursts, setHeartBursts] = useState<HeartBurst[]>([]);
-  const [isScrubbing, setIsScrubbing] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastTapRef = useRef<number>(0);
   const tapTimerRef = useRef<number | null>(null);
 
-  // Load real video blob from IndexedDB if user recorded/uploaded it on this device
+  // Load real media blob from IndexedDB if user recorded/uploaded it on this device
   useEffect(() => {
     let revokedUrl: string | null = null;
     let cancelled = false;
 
     if (!clip.hasLocalMedia || clip.videoUrl) {
       setLocalVideoUrl(null);
+      setLocalMediaIsImage(false);
       return;
     }
 
@@ -102,6 +79,7 @@ export function ClipPlayer({
       if (cancelled || !blob) return;
       const url = URL.createObjectURL(blob);
       revokedUrl = url;
+      setLocalMediaIsImage(blob.type.startsWith('image/'));
       setLocalVideoUrl(url);
     });
 
@@ -113,34 +91,63 @@ export function ClipPlayer({
     };
   }, [clip.id, clip.hasLocalMedia, clip.videoUrl]);
 
-  const videoSrc = clip.videoUrl || localVideoUrl;
+  const rawMediaSrc = clip.videoUrl || localVideoUrl;
+  const isImageMedia = Boolean(
+    rawMediaSrc &&
+      (localMediaIsImage || /\.(jpe?g|png|webp|gif)(\?|$)/i.test(rawMediaSrc)),
+  );
+  const videoSrc = isImageMedia ? null : rawMediaSrc;
+  const imageSrc = isImageMedia ? rawMediaSrc : clip.visualPreset;
 
   // Reset playback state when active state changes
   useEffect(() => {
     if (isActive) {
       setIsPlaying(true);
-    } else {
-      setProgressSec(0);
     }
   }, [isActive]);
 
-  // Sync HTML5 video element
+  // Sync HTML5 video element with sound ON by default (and graceful autoplay gesture fallback)
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid) return;
-    vid.muted = isMuted;
+
+    let unlockListener: (() => void) | null = null;
+
     if (isActive && isPlaying) {
+      vid.muted = false;
+      vid.volume = 1;
       void vid.play().catch(() => {
-        // Autoplay restriction fallback
+        // Browser blocked unmuted autoplay prior to first user gesture: start muted and unmute on first interaction
+        vid.muted = true;
+        vid.volume = 0;
+        void vid.play().catch(() => {});
+
+        unlockListener = () => {
+          if (videoRef.current) {
+            videoRef.current.muted = false;
+            videoRef.current.volume = 1;
+          }
+          if (unlockListener) {
+            window.removeEventListener('pointerdown', unlockListener);
+            unlockListener = null;
+          }
+        };
+        window.addEventListener('pointerdown', unlockListener, { once: true });
       });
     } else {
       vid.pause();
     }
-  }, [isActive, isPlaying, isMuted, videoSrc]);
 
-  // Sync Web Audio procedural synthesizer when active + playing + unmuted + no video stream
+    return () => {
+      if (unlockListener) {
+        window.removeEventListener('pointerdown', unlockListener);
+      }
+    };
+  }, [isActive, isPlaying, videoSrc]);
+
+  // Sync Web Audio procedural synthesizer when active + playing + no video stream (sound ON by default)
   useEffect(() => {
-    if (isActive && isPlaying && !isMuted && !videoSrc) {
+    if (isActive && isPlaying && !videoSrc) {
       audioEngine.start(clip.audioPreset);
     } else if (isActive) {
       audioEngine.stop();
@@ -150,19 +157,7 @@ export function ClipPlayer({
         audioEngine.stop();
       }
     };
-  }, [isActive, isPlaying, isMuted, videoSrc, clip.audioPreset]);
-
-  // Timer loop for visual motion clips without <video>
-  useEffect(() => {
-    if (!isActive || !isPlaying || videoSrc) return;
-    const interval = window.setInterval(() => {
-      setProgressSec((prev) => {
-        const next = prev + 0.1;
-        return next >= durationSec ? 0 : next;
-      });
-    }, 100);
-    return () => window.clearInterval(interval);
-  }, [isActive, isPlaying, videoSrc, durationSec]);
+  }, [isActive, isPlaying, videoSrc, clip.audioPreset]);
 
   const showTransientPlayState = (state: 'play' | 'pause') => {
     setPlayIndicator(state);
@@ -172,13 +167,17 @@ export function ClipPlayer({
   };
 
   const handleStageTap = (e: MouseEvent<HTMLDivElement>) => {
+    if (videoRef.current && videoRef.current.muted) {
+      videoRef.current.muted = false;
+      videoRef.current.volume = 1;
+    }
+
     const now = Date.now();
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
     if (now - lastTapRef.current < 280) {
-      // Double tap -> heart explosion
       if (tapTimerRef.current) {
         window.clearTimeout(tapTimerRef.current);
         tapTimerRef.current = null;
@@ -206,18 +205,8 @@ export function ClipPlayer({
     }, 240);
   };
 
-  const handleScrub = (nextSec: number) => {
-    setProgressSec(nextSec);
-    if (videoRef.current) {
-      videoRef.current.currentTime = nextSec;
-    }
-  };
-
-  const progressPct = durationSec > 0 ? Math.min(100, (progressSec / durationSec) * 100) : 0;
-  const displayLikes = clip.likesCount + (clip.isStarter && isLiked ? 1 : 0);
-
   return (
-    <div className="relative w-full h-full bg-[#121216] overflow-hidden select-none lg:rounded-2xl lg:border lg:border-white/10">
+    <div className="relative w-full h-full bg-[#0F111A] overflow-hidden select-none lg:rounded-2xl lg:border lg:border-white/10">
       {/* Media Stage */}
       <div
         role="button"
@@ -230,7 +219,7 @@ export function ClipPlayer({
             setIsPlaying((p) => !p);
           }
         }}
-        className="absolute inset-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF3B5C]"
+        className="absolute inset-0 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6C5CE7]"
       >
         {videoSrc ? (
           <video
@@ -239,21 +228,15 @@ export function ClipPlayer({
             loop
             playsInline
             preload={dataSaver ? 'metadata' : 'auto'}
-            muted={isMuted}
             onLoadedMetadata={(e) => {
-              const d = e.currentTarget.duration;
-              if (Number.isFinite(d) && d > 0) {
-                setDurationSec(d);
-              }
-            }}
-            onTimeUpdate={(e) => {
-              setProgressSec(e.currentTarget.currentTime);
+              e.currentTarget.muted = false;
+              e.currentTarget.volume = 1;
             }}
             className="w-full h-full object-cover"
           />
-        ) : !imgFailed && clip.visualPreset ? (
+        ) : !imgFailed && imageSrc ? (
           <img
-            src={clip.visualPreset}
+            src={imageSrc}
             alt={clip.caption}
             referrerPolicy="no-referrer"
             onError={() => setImgFailed(true)}
@@ -264,7 +247,7 @@ export function ClipPlayer({
             }`}
           />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-zinc-900 via-[#1b141a] to-zinc-950 flex flex-col items-center justify-center p-8 text-center gap-3">
+          <div className="w-full h-full bg-gradient-to-br from-[#0F111A] via-[#161926] to-[#0F111A] flex flex-col items-center justify-center p-8 text-center gap-3">
             <Film className="w-10 h-10 text-zinc-500" />
             <p className="text-sm text-zinc-400 max-w-xs">{clip.caption}</p>
           </div>
@@ -273,13 +256,13 @@ export function ClipPlayer({
         {/* Measured Contrast Scrim */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/88 via-black/25 to-black/35"
+          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/88 via-black/20 to-black/35"
         />
 
         {/* Paused Dimmer & Center Indicator */}
         {(!isPlaying || playIndicator) && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="w-16 h-16 rounded-full bg-black/55 backdrop-blur-md border border-white/15 flex items-center justify-center text-white transition-transform duration-150">
+            <div className="w-16 h-16 rounded-full bg-[#0F111A]/70 backdrop-blur-md border border-white/15 flex items-center justify-center text-white transition-transform duration-150">
               {playIndicator === 'play' || isPlaying ? (
                 <Play className="w-7 h-7 fill-white translate-x-0.5" />
               ) : (
@@ -296,270 +279,167 @@ export function ClipPlayer({
             style={{ left: burst.x, top: burst.y }}
             className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 animate-ping"
           >
-            <Heart className="w-16 h-16 text-[#FF3B5C] fill-[#FF3B5C] drop-shadow-lg" />
+            <Heart className="w-16 h-16 text-[#E84393] fill-[#E84393] drop-shadow-lg" />
           </div>
         ))}
       </div>
 
-      {/* Top Controls Overlay (Category + Sound + Delete own clip) */}
-      <div className="pointer-events-none absolute top-4 left-4 right-4 flex items-center justify-between z-20">
-        <span className="text-xs font-medium text-white/80 tracking-wide capitalize drop-shadow">
-          {clip.category}
-          {clip.viewsLabel ? ` · ${clip.viewsLabel} vistas` : ''}
-          {clip.visibility === 'private' ? ' · Privado' : ''}
-          {dataSaver ? ' · Ahorro de datos' : ''}
-        </span>
-
-        <div className="pointer-events-auto flex items-center gap-2">
-          {isOwnClip && onDeleteClip && (
+      {/* Right Action Rail (Creator Avatar 48x48 + red + badge at top, then 4 action icons + disc, gap-5) */}
+      <div className="pointer-events-none absolute right-3.5 top-20 bottom-3.5 lg:bottom-4 z-20 flex flex-col items-end justify-end">
+        <div className="pointer-events-auto flex flex-col items-center justify-end gap-5 max-h-full overflow-y-auto no-scrollbar py-1">
+          {/* Creator Avatar + Overlapping Red Follow (+) Badge on all videos */}
+          <div className="relative shrink-0 pb-1">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onDeleteClip();
+                onSelectCreator(clip.authorId);
               }}
-              aria-label="Eliminar klip"
-              title="Eliminar klip"
-              className="min-h-[44px] min-w-[44px] rounded-full bg-black/45 hover:bg-black/70 backdrop-blur-md border border-white/15 flex items-center justify-center text-zinc-200 hover:text-[#FF3B5C] transition-colors cursor-pointer"
+              aria-label={`Ver perfil de ${clip.authorDisplayName}`}
+              className="block rounded-full ring-2 ring-white/85 shadow-lg cursor-pointer"
             >
-              <Trash2 className="w-4 h-4" />
+              <AvatarImg
+                src={clip.authorAvatarUrl}
+                alt={clip.authorDisplayName}
+                fallbackText={clip.authorDisplayName}
+                sizeClass="w-12 h-12"
+              />
             </button>
-          )}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleMute();
-            }}
-            aria-label={isMuted ? 'Activar sonido' : 'Silenciar sonido'}
-            className="min-h-[44px] min-w-[44px] rounded-full bg-black/45 hover:bg-black/70 backdrop-blur-md border border-white/15 flex items-center justify-center text-white transition-colors cursor-pointer"
-          >
-            {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-          </button>
-        </div>
-      </div>
-
-      {/* Right Action Rail (44px+ touch targets) */}
-      <div className="absolute right-3 bottom-20 z-20 flex flex-col items-center gap-4">
-        {/* Creator Avatar + Follow */}
-        <div className="relative flex flex-col items-center mb-1">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelectCreator(clip.authorId);
-            }}
-            aria-label={`Ver perfil de ${clip.authorDisplayName}`}
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF3B5C]"
-          >
-            <AvatarImg
-              src={clip.authorAvatarUrl}
-              alt={clip.authorDisplayName}
-              fallbackText={clip.authorDisplayName}
-              sizeClass="w-11 h-11"
-            />
-          </button>
-          {!isOwnClip && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onToggleFollow();
               }}
-              aria-label={isFollowing ? 'Dejar de seguir' : 'Seguir creador'}
-              className={`-mt-3 w-6 h-6 rounded-full flex items-center justify-center border border-[#09090B] transition-colors cursor-pointer ${
-                isFollowing
-                  ? 'bg-zinc-800 text-white'
-                  : 'bg-[#FF3B5C] hover:bg-[#ff264b] text-white'
+              aria-label={
+                isOwnClip
+                  ? `Seguir a ${clip.authorDisplayName}`
+                  : isFollowing
+                    ? `Dejar de seguir a ${clip.authorDisplayName}`
+                    : `Seguir a ${clip.authorDisplayName}`
+              }
+              className={`absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-5 h-5 rounded-full border-2 border-[#0F111A] flex items-center justify-center text-white shadow-md transition-transform active:scale-90 cursor-pointer ${
+                !isOwnClip && isFollowing ? 'bg-[#6C5CE7]' : 'bg-red-500 hover:bg-red-600'
               }`}
             >
-              {isFollowing ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+              {!isOwnClip && isFollowing ? (
+                <Check className="w-3 h-3 stroke-[3]" />
+              ) : (
+                <Plus className="w-3.5 h-3.5 stroke-[3]" />
+              )}
             </button>
-          )}
-        </div>
-
-        {/* Like */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleLike();
-          }}
-          aria-label={isLiked ? 'Quitar me gusta' : 'Dar me gusta'}
-          className="min-h-[44px] min-w-[44px] flex flex-col items-center justify-center gap-1 text-white cursor-pointer group"
-        >
-          <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center group-active:scale-90 transition-transform">
-            <Heart
-              className={`w-6 h-6 transition-colors ${
-                isLiked ? 'text-[#FF3B5C] fill-[#FF3B5C]' : 'text-white'
-              }`}
-            />
           </div>
-          <span className="font-mono text-xs tabular-nums text-white/95 drop-shadow">
-            {formatCompactCount(displayLikes)}
-          </span>
-        </button>
 
-        {/* Comments */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenComments();
-          }}
-          aria-label="Abrir comentarios"
-          className="min-h-[44px] min-w-[44px] flex flex-col items-center justify-center gap-1 text-white cursor-pointer group"
-        >
-          <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center group-active:scale-90 transition-transform">
-            <MessageCircle className="w-6 h-6 text-white" />
-          </div>
-          <span className="font-mono text-xs tabular-nums text-white/95 drop-shadow">
-            {formatCompactCount(commentsCount)}
-          </span>
-        </button>
-
-        {/* Bookmark */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleBookmark();
-          }}
-          aria-label={isBookmarked ? 'Quitar de guardados' : 'Guardar klip'}
-          className="min-h-[44px] min-w-[44px] flex flex-col items-center justify-center gap-1 text-white cursor-pointer group"
-        >
-          <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center group-active:scale-90 transition-transform">
-            <Bookmark
-              className={`w-5 h-5 transition-colors ${
-                isBookmarked ? 'text-amber-400 fill-amber-400' : 'text-white'
-              }`}
-            />
-          </div>
-          <span className="text-[11px] text-white/90 drop-shadow">
-            {isBookmarked ? 'Guardado' : 'Guardar'}
-          </span>
-        </button>
-
-        {/* Share */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onShare();
-          }}
-          aria-label="Compartir klip"
-          className="min-h-[44px] min-w-[44px] flex flex-col items-center justify-center gap-1 text-white cursor-pointer group"
-        >
-          <div className="w-11 h-11 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center group-active:scale-90 transition-transform">
-            <Share2 className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-mono text-xs tabular-nums text-white/95 drop-shadow">
-            {formatCompactCount(clip.sharesCount)}
-          </span>
-        </button>
-
-        {/* Report / Block */}
-        {!isOwnClip && onReport && (
+          {/* Like */}
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              onReport();
+              onToggleLike();
             }}
-            aria-label="Reportar o bloquear"
-            title="Reportar o bloquear"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center text-white/80 hover:text-[#FF3B5C] cursor-pointer"
+            aria-label={isLiked ? 'Quitar me gusta' : 'Dar me gusta'}
+            className="shrink-0 w-12 h-12 rounded-full bg-[#0F111A]/50 hover:bg-[#0F111A]/75 backdrop-blur-md border border-white/15 flex items-center justify-center active:scale-90 transition-all cursor-pointer"
           >
-            <div className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center justify-center">
-              <Flag className="w-4 h-4" />
-            </div>
+            <Heart
+              className={`w-7 h-7 transition-colors ${
+                isLiked ? 'text-[#E84393] fill-[#E84393]' : 'text-white'
+              }`}
+            />
           </button>
-        )}
 
-        {/* Spinning Audio Disc */}
-        <div
-          aria-hidden="true"
-          className={`mt-1 w-9 h-9 rounded-full bg-zinc-900 border-2 border-white/25 flex items-center justify-center overflow-hidden animate-vinyl-spin ${
-            isActive && isPlaying ? '' : 'animate-vinyl-paused'
-          }`}
-        >
-          <Music2 className="w-4 h-4 text-zinc-200" />
+          {/* Comments */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenComments();
+            }}
+            aria-label="Abrir comentarios"
+            className="shrink-0 w-12 h-12 rounded-full bg-[#0F111A]/50 hover:bg-[#0F111A]/75 backdrop-blur-md border border-white/15 flex items-center justify-center active:scale-90 transition-all cursor-pointer"
+          >
+            <MessageCircle className="w-7 h-7 text-white" />
+          </button>
+
+          {/* Bookmark */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleBookmark();
+            }}
+            aria-label={isBookmarked ? 'Quitar de guardados' : 'Guardar klip'}
+            className="shrink-0 w-12 h-12 rounded-full bg-[#0F111A]/50 hover:bg-[#0F111A]/75 backdrop-blur-md border border-white/15 flex items-center justify-center active:scale-90 transition-all cursor-pointer"
+          >
+            <Bookmark
+              className={`w-7 h-7 transition-colors ${
+                isBookmarked ? 'text-[#00B4D8] fill-[#00B4D8]' : 'text-white'
+              }`}
+            />
+          </button>
+
+          {/* Share */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onShare();
+            }}
+            aria-label="Compartir klip"
+            className="shrink-0 w-12 h-12 rounded-full bg-[#0F111A]/50 hover:bg-[#0F111A]/75 backdrop-blur-md border border-white/15 flex items-center justify-center active:scale-90 transition-all cursor-pointer"
+          >
+            <Share2 className="w-7 h-7 text-white" />
+          </button>
+
+          {/* Subtle small Spinning Music Disc */}
+          <div
+            aria-hidden="true"
+            className={`shrink-0 w-7 h-7 rounded-full bg-[#0F111A]/65 border border-white/20 flex items-center justify-center overflow-hidden animate-vinyl-spin ${
+              isActive && isPlaying ? '' : 'animate-vinyl-paused'
+            }`}
+          >
+            <Music2 className="w-3.5 h-3.5 text-[#00B4D8]/90" />
+          </div>
         </div>
       </div>
 
-      {/* Bottom Creator & Caption Overlay */}
-      <div className="pointer-events-none absolute left-4 right-20 bottom-5 z-20 space-y-1.5">
-        <div className="pointer-events-auto flex items-center gap-2.5">
+      {/* Bottom Creator & Caption Overlay (only displayName on videos; @username is shown on Profile) */}
+      <div className="pointer-events-none absolute left-3.5 right-20 bottom-3 lg:bottom-3.5 z-20 space-y-1">
+        <div className="pointer-events-auto flex items-center">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               onSelectCreator(clip.authorId);
             }}
-            className="text-left font-display font-bold text-base text-white hover:underline cursor-pointer"
+            className="text-left font-display font-bold text-sm text-white hover:underline truncate cursor-pointer"
           >
-            @{clip.authorUsername}
+            {clip.authorDisplayName}
           </button>
-          <span className="text-xs text-white/75 truncate">{clip.authorDisplayName}</span>
         </div>
 
-        <p className="text-sm text-zinc-100 leading-snug line-clamp-3 drop-shadow">
-          {clip.caption}
-        </p>
+        {clip.caption && (
+          <p className="text-xs text-zinc-100 leading-snug line-clamp-2 drop-shadow">
+            {clip.caption}
+          </p>
+        )}
 
         {clip.hashtags.length > 0 && (
-          <p className="text-xs text-zinc-300/90 leading-relaxed truncate">
+          <p className="text-[11px] text-zinc-300/90 leading-tight truncate">
             {clip.hashtags.map((tag, idx) => (
               <span key={tag}>
-                {idx > 0 && <span className="mx-1.5 text-zinc-500">·</span>}
+                {idx > 0 && <span className="mx-1 text-zinc-500">·</span>}
                 <span className="font-medium text-white/90">#{tag}</span>
               </span>
             ))}
           </p>
         )}
 
-        <div className="flex items-center gap-2 text-xs text-zinc-200/90 pt-0.5">
-          <Music2 className="w-3.5 h-3.5 shrink-0 text-[#FF3B5C]" />
+        <div className="flex items-center gap-1.5 text-[11px] text-zinc-200/90">
+          <Music2 className="w-3 h-3 shrink-0 text-[#00B4D8]" />
           <span className="truncate">{clip.audioTitle}</span>
         </div>
       </div>
 
-      {/* Subtle Bottom Progress Bar (seconds counter hidden unless scrubbing/hovering) */}
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="group/progress absolute bottom-0 left-0 right-0 z-30 pt-3"
-      >
-        <div
-          className={`px-3 pb-1 flex justify-end transition-opacity duration-150 pointer-events-none ${
-            isScrubbing ? 'opacity-100' : 'opacity-0 group-hover/progress:opacity-100'
-          }`}
-        >
-          <span className="font-mono text-[10px] tabular-nums text-white/80 bg-black/55 px-1.5 py-0.5 rounded">
-            {formatSeconds(progressSec)} / {formatSeconds(durationSec)}
-          </span>
-        </div>
-
-        <div className="relative h-[3px] group-hover/progress:h-1.5 transition-all bg-white/20">
-          <div
-            style={{ width: `${progressPct}%` }}
-            className="h-full bg-[#FF3B5C] transition-[width] duration-100"
-          />
-          <input
-            type="range"
-            min={0}
-            max={durationSec}
-            step={0.1}
-            value={progressSec}
-            onPointerDown={() => setIsScrubbing(true)}
-            onPointerUp={() => setIsScrubbing(false)}
-            onPointerCancel={() => setIsScrubbing(false)}
-            onBlur={() => setIsScrubbing(false)}
-            onChange={(e) => handleScrub(Number(e.target.value))}
-            aria-label="Progreso del klip"
-            className="absolute inset-0 -top-2 w-full h-5 opacity-0 cursor-pointer"
-          />
-        </div>
-      </div>
     </div>
   );
 }

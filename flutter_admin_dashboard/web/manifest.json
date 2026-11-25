@@ -1,0 +1,11 @@
+{
+  "name": "Viroklipz Admin",
+  "short_name": "Viroklipz Admin",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#070A14",
+  "theme_color": "#070A14",
+  "description": "Panel de Administración Web independiente para Viroklipz.",
+  "orientation": "landscape-primary",
+  "prefer_related_applications": false
+}

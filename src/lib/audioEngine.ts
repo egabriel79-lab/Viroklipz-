@@ -124,6 +124,31 @@ class ViroklipzAudioEngine {
     this.timer = window.setInterval(tick, stepMs);
   }
 
+  public playVipChime() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    try {
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      const baseTime = ctx.currentTime;
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = baseTime + idx * 0.08;
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, start);
+        gain.gain.setValueAtTime(0.001, start);
+        gain.gain.exponentialRampToValueAtTime(0.09, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0008, start + 0.34);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.36);
+      });
+    } catch {
+      // Ignore Web Audio errors when autoplay is restricted
+    }
+  }
+
   public stop() {
     if (this.timer !== null) {
       window.clearInterval(this.timer);

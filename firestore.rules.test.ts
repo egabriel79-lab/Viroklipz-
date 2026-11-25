@@ -21,4 +21,12 @@ export const DIRTY_DOZEN_VECTORS = [
   { name: 'unsafe-video-url-scheme', collection: 'clips', expected: 'PERMISSION_DENIED' },
   { name: 'dm-eavesdropping', collection: 'directThreads', expected: 'PERMISSION_DENIED' },
   { name: 'status-note-spoofing', collection: 'statusNotes', expected: 'PERMISSION_DENIED' },
+  { name: 'live-stream-host-impersonation', collection: 'liveStreams', expected: 'PERMISSION_DENIED' },
+  { name: 'live-message-ended-stream', collection: 'liveStreams/messages', expected: 'PERMISSION_DENIED' },
+  { name: 'live-likes-tampering', collection: 'liveStreams', expected: 'PERMISSION_DENIED' },
+  { name: 'self-assigned-admin-escalation', collection: 'admins', expected: 'PERMISSION_DENIED' },
+  { name: 'report-status-tampering', collection: 'reports', expected: 'PERMISSION_DENIED' },
+  { name: 'email-spoof-admin-bypass', collection: 'reports', expected: 'PERMISSION_DENIED' },
+  { name: 'non-admin-clip-moderation-delete', collection: 'clips', expected: 'PERMISSION_DENIED' },
+  { name: 'live-config-spoofing', collection: 'liveConfigs', expected: 'PERMISSION_DENIED' },
 ] as const;

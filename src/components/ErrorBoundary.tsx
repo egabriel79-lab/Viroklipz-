@@ -29,8 +29,8 @@ export class ErrorBoundary extends Component<Props, State> {
   public render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-[100dvh] bg-[#09090B] text-zinc-100 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-[#121216] border border-white/10 rounded-2xl p-6 space-y-4">
+        <div className="min-h-[100dvh] bg-[#0F111A] text-zinc-100 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-[#161926] border border-white/10 rounded-2xl p-6 space-y-4">
             <h2 className="font-display text-xl font-bold text-white">
               Algo interrumpió la reproducción
             </h2>
@@ -40,7 +40,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="px-4 py-2.5 rounded-xl bg-[#FF3B5C] hover:bg-[#ff264b] text-white text-sm font-semibold transition-colors cursor-pointer"
+              className="px-4 py-2.5 rounded-xl bg-[#E84393] hover:bg-[#d63384] text-white text-sm font-semibold transition-colors cursor-pointer"
             >
               Recargar Viroklipz
             </button>

@@ -11,9 +11,12 @@ export const MAX_NAME_PART_LEN = 40;
 export const MAX_PHONE_LEN = 24;
 export const MAX_EMAIL_LEN = 120;
 export const MAX_BIO_LEN = 160;
+export const MAX_BIO_COLOR_LEN = 16;
+export const MAX_PERSONAL_LINK_LEN = 160;
+export const MAX_PRONOUNS_LEN = 32;
 export const MAX_AVATAR_URL_LEN = 300;
 export const MAX_MEDIA_URL_LEN = 300;
-export const MAX_CAPTION_LEN = 220;
+export const MAX_CAPTION_LEN = 1000;
 export const MAX_COMMENT_LEN = 240;
 export const MAX_NOTE_LEN = 60;
 export const MAX_REPORT_DETAILS_LEN = 240;
@@ -21,6 +24,7 @@ export const MAX_HASHTAGS = 8;
 export const MAX_HASHTAG_LEN = 32;
 export const MAX_AUDIO_TITLE_LEN = 80;
 export const MAX_VISUAL_PRESET_LEN = 120;
+export const MAX_FCM_TOKEN_LEN = 512;
 
 export const MAX_VIDEO_FILE_MB = 80;
 export const MAX_VIDEO_FILE_BYTES = MAX_VIDEO_FILE_MB * 1024 * 1024;
@@ -30,7 +34,15 @@ export const ALLOWED_VIDEO_MIME_TYPES = [
   'video/quicktime',
 ] as const;
 
+export const ALLOWED_IMAGE_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+] as const;
+
 export const ALLOWED_CATEGORIES: readonly ClipCategory[] = [
+  'general',
   'baile',
   'musica',
   'cocina',
@@ -52,6 +64,7 @@ export const ALLOWED_REPORT_REASONS: readonly ReportReason[] = [
   'spam',
   'acoso',
   'contenido_inapropiado',
+  'desnudo',
   'derechos_autor',
 ];
 
@@ -69,31 +82,61 @@ export function containsProhibitedContent(raw: string): boolean {
   return PROHIBITED_TEXT_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-export function validateVideoFile(file: File): { ok: true } | { ok: false; message: string } {
+export function validateClipMediaFile(
+  file: File,
+): { ok: true; kind: 'video' | 'image'; mimeType: string } | { ok: false; message: string } {
   const lowerName = file.name.toLowerCase();
-  const hasAllowedExt =
-    lowerName.endsWith('.mp4') || lowerName.endsWith('.webm') || lowerName.endsWith('.mov');
-  const hasAllowedMime =
-    ALLOWED_VIDEO_MIME_TYPES.includes(file.type as (typeof ALLOWED_VIDEO_MIME_TYPES)[number]);
+  const isVideoExt =
+    lowerName.endsWith('.mp4') ||
+    lowerName.endsWith('.webm') ||
+    lowerName.endsWith('.mov') ||
+    lowerName.endsWith('.m4v') ||
+    lowerName.endsWith('.3gp');
+  const isImageExt =
+    lowerName.endsWith('.jpg') ||
+    lowerName.endsWith('.jpeg') ||
+    lowerName.endsWith('.png') ||
+    lowerName.endsWith('.webp') ||
+    lowerName.endsWith('.gif');
 
-  if (!hasAllowedMime && !hasAllowedExt) {
+  const isVideoMime =
+    ALLOWED_VIDEO_MIME_TYPES.includes(file.type as (typeof ALLOWED_VIDEO_MIME_TYPES)[number]) ||
+    file.type.startsWith('video/');
+  const isImageMime =
+    ALLOWED_IMAGE_MIME_TYPES.includes(file.type as (typeof ALLOWED_IMAGE_MIME_TYPES)[number]) ||
+    file.type.startsWith('image/');
+
+  if (!isVideoMime && !isVideoExt && !isImageMime && !isImageExt) {
     return {
       ok: false,
-      message: 'Formato no compatible. Usa un video .mp4, .webm o .mov.',
+      message: 'Formato no compatible. Usa video (.mp4, .webm, .mov) o imagen (.jpg, .png, .webp).',
     };
   }
   if (file.size <= 0) {
     return {
       ok: false,
-      message: 'El archivo de video está vacío.',
+      message: 'El archivo seleccionado está vacío.',
     };
   }
   if (file.size > MAX_VIDEO_FILE_BYTES) {
     return {
       ok: false,
-      message: `El video supera el límite máximo de ${MAX_VIDEO_FILE_MB} MB.`,
+      message: `El archivo supera el límite máximo de ${MAX_VIDEO_FILE_MB} MB.`,
     };
   }
+
+  const kind: 'video' | 'image' = isImageMime || isImageExt ? 'image' : 'video';
+  const fallbackMime = kind === 'image' ? 'image/jpeg' : 'video/mp4';
+  return {
+    ok: true,
+    kind,
+    mimeType: file.type || fallbackMime,
+  };
+}
+
+export function validateVideoFile(file: File): { ok: true } | { ok: false; message: string } {
+  const res = validateClipMediaFile(file);
+  if (!res.ok) return res;
   return { ok: true };
 }
 
@@ -137,6 +180,22 @@ export function sanitizeMediaUrl(raw: string | null | undefined): string {
   return '';
 }
 
+export function sanitizePersonalLink(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const trimmed = raw.trim().slice(0, MAX_PERSONAL_LINK_LEN);
+  if (!trimmed) return '';
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString().slice(0, MAX_PERSONAL_LINK_LEN);
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
 export function parseHashtags(raw: string): string[] {
   const tokens = raw
     .split(/[\s,]+/)
@@ -156,32 +215,23 @@ export function parseHashtags(raw: string): string[] {
 export function validateClipPayload(input: {
   caption: string;
   audioTitle: string;
-  category: ClipCategory;
+  category?: ClipCategory | '';
   audioPreset: AudioPreset;
   durationSec: number;
 }): { ok: true } | { ok: false; message: string } {
   const caption = input.caption.trim();
-  if (caption.length < 1 || caption.length > MAX_CAPTION_LEN) {
-    return {
-      ok: false,
-      message: `La descripción debe tener entre 1 y ${MAX_CAPTION_LEN} caracteres.`,
-    };
-  }
-  if (containsProhibitedContent(caption)) {
+  if (caption.length > 0 && containsProhibitedContent(caption)) {
     return {
       ok: false,
       message: 'La descripción contiene términos no permitidos por las normas de Viroklipz.',
     };
   }
   const audioTitle = input.audioTitle.trim();
-  if (audioTitle.length < 1 || audioTitle.length > MAX_AUDIO_TITLE_LEN) {
+  if (audioTitle.length > MAX_AUDIO_TITLE_LEN) {
     return {
       ok: false,
-      message: `El título de audio debe tener entre 1 y ${MAX_AUDIO_TITLE_LEN} caracteres.`,
+      message: `El título de audio no puede superar ${MAX_AUDIO_TITLE_LEN} caracteres.`,
     };
-  }
-  if (!ALLOWED_CATEGORIES.includes(input.category)) {
-    return { ok: false, message: 'Categoría no válida.' };
   }
   if (!ALLOWED_AUDIO_PRESETS.includes(input.audioPreset)) {
     return { ok: false, message: 'Pista de audio no válida.' };
@@ -196,6 +246,9 @@ export function validateProfilePayload(input: {
   username: string;
   displayName: string;
   bio: string;
+  bioColor?: string;
+  personalLink?: string;
+  pronouns?: string;
 }): { ok: true } | { ok: false; message: string } {
   const username = input.username.trim().toLowerCase();
   if (!USERNAME_REGEX.test(username)) {
@@ -216,6 +269,18 @@ export function validateProfilePayload(input: {
     return {
       ok: false,
       message: `La biografía no puede superar ${MAX_BIO_LEN} caracteres.`,
+    };
+  }
+  if (input.personalLink && input.personalLink.trim().length > MAX_PERSONAL_LINK_LEN) {
+    return {
+      ok: false,
+      message: `El enlace personal no puede superar ${MAX_PERSONAL_LINK_LEN} caracteres.`,
+    };
+  }
+  if (input.pronouns && input.pronouns.trim().length > MAX_PRONOUNS_LEN) {
+    return {
+      ok: false,
+      message: `El pronombre no puede superar ${MAX_PRONOUNS_LEN} caracteres.`,
     };
   }
   if (containsProhibitedContent(input.bio) || containsProhibitedContent(displayName)) {

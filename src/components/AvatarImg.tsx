@@ -25,7 +25,7 @@ export function AvatarImg({
     return (
       <div
         aria-label={alt}
-        className={`${sizeClass} rounded-full bg-gradient-to-br from-[#FF3B5C]/80 to-zinc-800 border border-white/15 flex items-center justify-center text-white font-display font-bold text-sm shrink-0 select-none`}
+        className={`${sizeClass} rounded-full bg-gradient-to-br from-[#6C5CE7]/85 to-[#00B4D8]/80 border border-white/15 flex items-center justify-center text-white font-display font-bold text-sm shrink-0 select-none`}
       >
         {initial}
       </div>

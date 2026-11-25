@@ -3,27 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <title>Viroklipz — Red social de klips verticales</title>
+    <title>Viroklipz — Red social PWA de videos cortos y en vivo</title>
+    <script>
+      try {
+        if (localStorage.getItem('viroklipz_theme') === 'light') {
+          document.documentElement.classList.remove('dark');
+        }
+      } catch (e) {}
+    </script>
     <meta
       name="description"
-      content="Explora, graba y comparte klips verticales con modo ahorro de datos, rachas diarias y chat en tiempo real en Viroklipz."
+      content="Crea y mira klips verticales 9:16, transmite en vivo y chatea en tiempo real con Viroklipz: la app web PWA rápida, ligera y con ahorro de datos móvil."
     />
+    <meta
+      name="keywords"
+      content="Viroklipz, red social PWA, aplicación web progresiva, videos cortos verticales, klips 9:16, transmisiones en vivo, live streaming web, ahorrar datos móviles, red social ligera, historias y chat en tiempo real"
+    />
+    <meta name="author" content="Viroklipz" />
+    <meta name="application-name" content="Viroklipz" />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <meta
+      name="googlebot"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1"
+    />
+    <link rel="alternate" type="text/plain" title="Información estructurada para IA" href="/llms.txt" />
+    <meta property="og:locale" content="es_ES" />
     <meta property="og:site_name" content="Viroklipz" />
-    <meta property="og:title" content="Viroklipz — Red social de klips verticales" />
+    <meta property="og:title" content="Viroklipz — Red social PWA de videos cortos y en vivo" />
     <meta
       property="og:description"
-      content="Explora, graba y comparte klips verticales con modo ahorro de datos, rachas diarias y chat en tiempo real en Viroklipz."
+      content="Instala Viroklipz sin tiendas ni descargas pesadas. Klips verticales 9:16, transmisiones en vivo, historias y chat en tiempo real con modo ahorro de datos."
     />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="/pwa-512x512.png" />
+    <meta property="og:image:alt" content="Viroklipz — Red social PWA de videos cortos verticales y transmisiones en vivo" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Viroklipz — Red social de klips verticales" />
+    <meta name="twitter:title" content="Viroklipz — Red social PWA de videos cortos y en vivo" />
     <meta
       name="twitter:description"
-      content="Explora, graba y comparte klips verticales en tiempo real en Viroklipz."
+      content="Tu red social PWA ligera: klips 9:16, transmisiones LIVE, historias y comunidad en tiempo real sin ocupar espacio."
     />
     <meta name="twitter:image" content="/pwa-512x512.png" />
-    <meta name="theme-color" content="#09090B" />
+    <meta name="twitter:image:alt" content="Logotipo de Viroklipz PWA" />
+    <meta name="theme-color" content="#0F111A" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -39,20 +64,84 @@
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
-        "@type": "WebApplication",
-        "name": "Viroklipz",
-        "applicationCategory": "SocialNetworkingApplication",
-        "operatingSystem": "All",
-        "description": "Red social ligera de clips cortos verticales con modo ahorro de datos, rachas y chat en tiempo real.",
-        "offers": {
-          "@type": "Offer",
-          "price": "0",
-          "priceCurrency": "USD"
-        }
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "Viroklipz",
+            "alternateName": "Viroklipz PWA",
+            "applicationCategory": "SocialNetworkingApplication",
+            "operatingSystem": "Android, iOS, Windows, macOS, Linux, Web",
+            "browserRequirements": "Requiere JavaScript. Compatible con navegadores modernos y Progressive Web App (PWA).",
+            "inLanguage": "es",
+            "isAccessibleForFree": true,
+            "description": "Red social PWA ligera para crear y ver klips verticales 9:16, transmitir en vivo, compartir hasta 10 historias por usuario y chatear en tiempo real ahorrando datos móviles y almacenamiento.",
+            "featureList": [
+              "Instalación PWA directa sin tiendas de aplicaciones",
+              "Grabación y reproducción de videos verticales 9:16 en pantalla completa",
+              "Transmisiones en vivo integradas en el feed Para ti",
+              "Modo ahorro de datos de 720 kbps y caché inteligente",
+              "Historias, notas, mensajes directos y sala de la comunidad en tiempo real",
+              "Viroklipz Studio con métricas transparentes y temas Claro y Oscuro"
+            ],
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            }
+          },
+          {
+            "@type": "Organization",
+            "name": "Viroklipz",
+            "description": "Plataforma web progresiva de entretenimiento vertical, transmisiones en vivo y comunidad en tiempo real."
+          },
+          {
+            "@type": "WebSite",
+            "name": "Viroklipz",
+            "inLanguage": "es",
+            "description": "Explora klips verticales, creadores en vivo y comunidad en tiempo real desde cualquier navegador."
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "¿Qué es Viroklipz y qué ventajas tiene ser una aplicación web PWA?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Viroklipz es una red social de videos cortos verticales y transmisiones en vivo construida como Aplicación Web Progresiva (PWA). Se abre directo en el navegador, se instala en segundos en la pantalla de inicio sin pasar por tiendas, ocupa una fracción mínima de espacio y se actualiza automáticamente."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Cómo se instala Viroklipz en Android, iPhone o computadora?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "En Android o escritorio con Chrome o Edge basta pulsar el botón Instalar app PWA. En iPhone o iPad con Safari, toca Compartir y selecciona Añadir a pantalla de inicio para usarla a pantalla completa como una app nativa."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Viroklipz realmente ahorra datos móviles y batería?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Sí. Viroklipz incluye modo ahorro de datos tanto en la reproducción como al grabar klips con compresión eficiente a 720 kbps, precarga selectiva en caché y reproducción pausada automáticamente cuando un video sale de pantalla."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "¿Qué funciones incluye Viroklipz para creadores y usuarios?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Incluye feed Para ti y Siguiendo con klips 9:16 y transmisiones LIVE en vivo, cámara integrada de 10s a 60s, historias interactivas, mensajes directos, sala de la comunidad en tiempo real, rachas diarias, personalización de perfil con bordes de color y analíticas en Viroklipz Studio."
+                }
+              }
+            ]
+          }
+        ]
       }
     </script>
   </head>
-  <body class="bg-[#09090B] text-zinc-100 antialiased selection:bg-[#FF3B5C]/30 selection:text-white">
+  <body class="bg-zinc-50 text-zinc-900 dark:bg-[#0F111A] dark:text-zinc-100 antialiased selection:bg-[#6C5CE7]/30 selection:text-zinc-950 dark:selection:text-white">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

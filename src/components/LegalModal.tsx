@@ -23,15 +23,15 @@ export function LegalModal({
       aria-modal="true"
       aria-label="Términos de Uso y Política de Privacidad"
     >
-      <div className="w-full max-w-xl max-h-[88dvh] bg-[#121216] border border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
-        <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3 shrink-0">
+      <div className="w-full max-w-xl max-h-[88dvh] bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-2xl">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-white/10 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
             {tab === 'terms' ? (
-              <FileText className="w-5 h-5 text-[#FF3B5C]" />
+              <FileText className="w-5 h-5 text-[#6C5CE7] dark:text-[#8B7CF6]" />
             ) : (
-              <ShieldCheck className="w-5 h-5 text-[#FF3B5C]" />
+              <ShieldCheck className="w-5 h-5 text-[#0086A8] dark:text-[#00B4D8]" />
             )}
-            <h2 className="font-display text-lg font-bold text-white">
+            <h2 className="font-display text-lg font-bold text-zinc-900 dark:text-white">
               {tab === 'terms' ? 'Términos de Uso' : 'Política de Privacidad'}
             </h2>
           </div>
@@ -40,7 +40,7 @@ export function LegalModal({
             type="button"
             onClick={onClose}
             aria-label="Cerrar aviso legal"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-zinc-400 hover:text-white hover:bg-white/5 cursor-pointer"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -52,8 +52,8 @@ export function LegalModal({
             onClick={() => setTab('terms')}
             className={`min-h-[38px] px-4 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
               tab === 'terms'
-                ? 'bg-[#FF3B5C] text-white'
-                : 'bg-[#18181D] text-zinc-400 hover:text-white border border-white/10'
+                ? 'bg-[#6C5CE7] text-white'
+                : 'bg-zinc-100 dark:bg-[#0F111A] text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white border border-zinc-200 dark:border-white/10'
             }`}
           >
             Términos de Uso
@@ -63,19 +63,19 @@ export function LegalModal({
             onClick={() => setTab('privacy')}
             className={`min-h-[38px] px-4 rounded-xl text-xs font-semibold transition-colors cursor-pointer ${
               tab === 'privacy'
-                ? 'bg-[#FF3B5C] text-white'
-                : 'bg-[#18181D] text-zinc-400 hover:text-white border border-white/10'
+                ? 'bg-[#6C5CE7] text-white'
+                : 'bg-zinc-100 dark:bg-[#0F111A] text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white border border-zinc-200 dark:border-white/10'
             }`}
           >
             Política de Privacidad
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs sm:text-sm text-zinc-300 leading-relaxed">
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs sm:text-sm text-zinc-600 dark:text-zinc-300 leading-relaxed">
           {tab === 'terms' ? (
             <>
               <section className="space-y-1.5">
-                <h3 className="font-display text-sm font-bold text-white">
+                <h3 className="font-display text-sm font-bold text-zinc-900 dark:text-white">
                   1. Uso de Viroklipz y cuentas
                 </h3>
                 <p>
@@ -87,7 +87,7 @@ export function LegalModal({
               </section>
 
               <section className="space-y-1.5">
-                <h3 className="font-display text-sm font-bold text-white">
+                <h3 className="font-display text-sm font-bold text-zinc-900 dark:text-white">
                   2. Derechos de autor y propiedad del contenido
                 </h3>
                 <p>
@@ -99,7 +99,7 @@ export function LegalModal({
               </section>
 
               <section className="space-y-1.5">
-                <h3 className="font-display text-sm font-bold text-white">
+                <h3 className="font-display text-sm font-bold text-zinc-900 dark:text-white">
                   3. Moderación, reportes y bloqueos
                 </h3>
                 <p>
@@ -112,7 +112,7 @@ export function LegalModal({
           ) : (
             <>
               <section className="space-y-1.5">
-                <h3 className="font-display text-sm font-bold text-white">
+                <h3 className="font-display text-sm font-bold text-zinc-900 dark:text-white">
                   1. Datos que almacenamos
                 </h3>
                 <p>
@@ -124,7 +124,7 @@ export function LegalModal({
               </section>
 
               <section className="space-y-1.5">
-                <h3 className="font-display text-sm font-bold text-white">
+                <h3 className="font-display text-sm font-bold text-zinc-900 dark:text-white">
                   2. Cookies y almacenamiento local (PWA)
                 </h3>
                 <p>
@@ -135,7 +135,7 @@ export function LegalModal({
               </section>
 
               <section className="space-y-1.5">
-                <h3 className="font-display text-sm font-bold text-white">
+                <h3 className="font-display text-sm font-bold text-zinc-900 dark:text-white">
                   3. Eliminación y control de tu cuenta
                 </h3>
                 <p>
@@ -147,11 +147,11 @@ export function LegalModal({
           )}
         </div>
 
-        <div className="px-5 py-3.5 border-t border-white/10 bg-[#0D0D10] shrink-0">
+        <div className="px-5 py-3.5 border-t border-zinc-200 dark:border-white/10 bg-zinc-50 dark:bg-[#131622] shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="w-full min-h-[44px] rounded-xl bg-[#FF3B5C] hover:bg-[#ff264b] text-white text-sm font-semibold transition-colors cursor-pointer"
+            className="w-full min-h-[44px] rounded-xl bg-neon-cta text-white text-sm font-semibold transition-colors cursor-pointer"
           >
             Entendido
           </button>

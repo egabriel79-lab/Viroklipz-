@@ -26,12 +26,69 @@
           "type": "string",
           "maxLength": 160
         },
+        "bioColor": {
+          "type": "string",
+          "maxLength": 16
+        },
+        "personalLink": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "pronouns": {
+          "type": "string",
+          "maxLength": 32
+        },
         "avatarUrl": {
           "type": "string",
           "maxLength": 300
         },
         "isPublic": {
           "type": "boolean"
+        },
+        "fcmTokenWeb": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "presenceStatus": {
+          "type": "string",
+          "enum": ["online", "busy", "hidden"]
+        },
+        "mutedCommunityChat": {
+          "type": "boolean"
+        },
+        "fanLevel": {
+          "type": "number",
+          "description": "Viewer Fan Club level (1 to 50) earned through engagement and gifts."
+        },
+        "fanPoints": {
+          "type": "number",
+          "description": "Cumulative Fan Club XP points."
+        },
+        "banned": {
+          "type": "boolean",
+          "description": "Account suspension flag updated exclusively by admins."
+        },
+        "isAdmin": {
+          "type": "boolean",
+          "description": "Administrator privilege flag provisioned server-side or via console; never user-writable."
+        },
+        "coins": {
+          "type": "number",
+          "description": "Viroklipz virtual coin balance."
+        },
+        "followersCount": {
+          "type": "number",
+          "description": "Cached follower count."
+        },
+        "country": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Optional country label for admin analytics."
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Optional account email if synced for admin moderation."
         },
         "createdAt": {
           "type": "string",
@@ -195,12 +252,11 @@
         },
         "caption": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 220
+          "maxLength": 1000
         },
         "category": {
           "type": "string",
-          "enum": ["baile", "musica", "cocina", "deportes", "arte", "comedia", "viajes"]
+          "enum": ["general", "baile", "musica", "cocina", "deportes", "arte", "comedia", "viajes"]
         },
         "hashtags": {
           "type": "array"
@@ -410,11 +466,23 @@
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
+        "reporterUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
         "targetType": {
           "type": "string",
           "enum": ["clip", "chat_message", "user"]
         },
         "targetId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "videoId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
@@ -428,11 +496,23 @@
         },
         "reason": {
           "type": "string",
-          "enum": ["spam", "acoso", "contenido_inapropiado", "derechos_autor"]
+          "enum": ["spam", "acoso", "contenido_inapropiado", "desnudo", "derechos_autor"]
         },
         "details": {
           "type": "string",
           "maxLength": 240
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "resolved", "dismissed"]
+        },
+        "reviewedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time"
         },
         "createdAt": {
           "type": "string",
@@ -440,6 +520,24 @@
         }
       },
       "required": ["id", "reporterId", "targetType", "targetId", "targetAuthorId", "reason", "details", "createdAt"]
+    },
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Server-provisioned administrator role record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        }
+      },
+      "required": ["uid"]
     },
     "DirectThread": {
       "title": "DirectThread",
@@ -464,6 +562,14 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "streak": {
+          "type": "number",
+          "description": "Consecutive days streak for messages exchanged in this direct thread."
+        },
+        "lastMessageDate": {
+          "type": "string",
+          "format": "date-time"
         },
         "createdAt": {
           "type": "string",
@@ -561,9 +667,339 @@
         }
       },
       "required": ["uid", "username", "displayName", "avatarUrl", "note", "presence", "updatedAt"]
+    },
+    "CommunityChatMessage": {
+      "title": "CommunityChatMessage",
+      "description": "Real-time global community chat message stored in community_chat.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "roomId": {
+          "type": "string",
+          "enum": ["community"]
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorUsername": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-z0-9._]{3,24}$"
+        },
+        "authorAvatarUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "roomId", "authorId", "authorUsername", "authorAvatarUrl", "text", "createdAt"]
+    },
+    "LiveStream": {
+      "title": "LiveStream",
+      "description": "Active or ended real-time live broadcast session in Viroklipz.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "hostUsername": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-z0-9._]{3,24}$"
+        },
+        "hostDisplayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "hostAvatarUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "about": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "audience": {
+          "type": "string",
+          "enum": ["public", "friends"]
+        },
+        "quality": {
+          "type": "string",
+          "enum": ["720p", "1080p"]
+        },
+        "visualEffect": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "category": {
+          "type": "string",
+          "enum": ["general", "baile", "musica", "cocina", "deportes", "arte", "comedia", "viajes"]
+        },
+        "previewImageUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "streamUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "guestUid": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "guestDisplayName": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "guestStreamUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "audioPreset": {
+          "type": "string",
+          "enum": ["urban_beat", "sunset_house", "lofi_espresso", "alpine_rush", "analog_synth"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["live", "ended"]
+        },
+        "viewerCount": {
+          "type": "number"
+        },
+        "likesCount": {
+          "type": "number"
+        },
+        "giftsCount": {
+          "type": "number"
+        },
+        "fanPerks": {
+          "type": "array",
+          "description": "Creator-defined Fan Club level perks active during this live."
+        },
+        "audienceFavorites": {
+          "type": "array",
+          "description": "Gift-to-action triggers configured by the creator for this live."
+        },
+        "fanClubName": {
+          "type": "string",
+          "maxLength": 36
+        },
+        "fanPointsPerCoin": {
+          "type": "number"
+        },
+        "vipAlertEnabled": {
+          "type": "boolean"
+        },
+        "vipAlertTitle": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "vipAlertStyle": {
+          "type": "string",
+          "enum": ["crystal_magenta", "electric_pulse", "aurora_vip"]
+        },
+        "vipAlertDurationSec": {
+          "type": "number"
+        },
+        "vipAlertSound": {
+          "type": "boolean"
+        },
+        "startedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "hostUid",
+        "hostUsername",
+        "hostDisplayName",
+        "hostAvatarUrl",
+        "title",
+        "category",
+        "previewImageUrl",
+        "streamUrl",
+        "audioPreset",
+        "status",
+        "viewerCount",
+        "likesCount",
+        "startedAt",
+        "updatedAt"
+      ]
+    },
+    "LiveStreamMessage": {
+      "title": "LiveStreamMessage",
+      "description": "Real-time chat comment, heart reaction, or gift event inside an active LiveStream room.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "streamId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorUsername": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-z0-9._]{3,24}$"
+        },
+        "authorDisplayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "authorAvatarUrl": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["chat", "like", "gift"]
+        },
+        "giftName": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "giftId": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "giftValue": {
+          "type": "number"
+        },
+        "senderFanLevel": {
+          "type": "number"
+        },
+        "triggeredAction": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "streamId",
+        "authorId",
+        "authorUsername",
+        "authorDisplayName",
+        "authorAvatarUrl",
+        "text",
+        "kind",
+        "createdAt"
+      ]
+    },
+    "CreatorLiveConfig": {
+      "title": "CreatorLiveConfig",
+      "description": "Saved Fan Club perks, Fan Level settings, Audience Favorites, and Live VIP Alert preferences for a creator's Lives.",
+      "type": "object",
+      "properties": {
+        "creatorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "fanPerks": {
+          "type": "array"
+        },
+        "audienceFavorites": {
+          "type": "array"
+        },
+        "fanClubName": {
+          "type": "string",
+          "maxLength": 36
+        },
+        "fanPointsPerCoin": {
+          "type": "number"
+        },
+        "vipAlertEnabled": {
+          "type": "boolean"
+        },
+        "vipAlertTitle": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "vipAlertStyle": {
+          "type": "string",
+          "enum": ["crystal_magenta", "electric_pulse", "aurora_vip"]
+        },
+        "vipAlertDurationSec": {
+          "type": "number"
+        },
+        "vipAlertSound": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["creatorUid", "fanPerks", "audienceFavorites", "updatedAt"]
     }
   },
   "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminRole" },
+      "description": "Server-managed administrator role records."
+    },
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Public creator profiles without PII."
@@ -606,7 +1042,7 @@
     },
     "/reports/{reportId}": {
       "schema": { "$ref": "#/entities/ContentReport" },
-      "description": "Write-only moderation reports submitted by verified users."
+      "description": "Moderation reports submitted by verified users and reviewed by owner/admin."
     },
     "/directThreads/{threadId}": {
       "schema": { "$ref": "#/entities/DirectThread" },
@@ -619,6 +1055,22 @@
     "/statusNotes/{userId}": {
       "schema": { "$ref": "#/entities/StatusNote" },
       "description": "Short user status notes and availability states displayed in Mensajes."
+    },
+    "/community_chat/{messageId}": {
+      "schema": { "$ref": "#/entities/CommunityChatMessage" },
+      "description": "Global real-time community chat room messages."
+    },
+    "/liveStreams/{streamId}": {
+      "schema": { "$ref": "#/entities/LiveStream" },
+      "description": "Active and ended creator live broadcasts shown in Para ti and En vivo."
+    },
+    "/liveStreams/{streamId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/LiveStreamMessage" },
+      "description": "Real-time chat, heart, and gift events inside an active live stream room."
+    },
+    "/liveConfigs/{creatorUid}": {
+      "schema": { "$ref": "#/entities/CreatorLiveConfig" },
+      "description": "Saved Fan Club perks and Audience Favorites per creator."
     }
   }
 }

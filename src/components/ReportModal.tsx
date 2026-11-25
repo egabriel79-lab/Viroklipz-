@@ -23,10 +23,10 @@ interface ReportModalProps {
 }
 
 const REASON_OPTIONS: { value: ReportReason; label: string }[] = [
+  { value: 'spam', label: 'Spam' },
   { value: 'contenido_inapropiado', label: 'Contenido inapropiado' },
-  { value: 'spam', label: 'Spam o estafa' },
-  { value: 'acoso', label: 'Acoso o discurso de odio' },
-  { value: 'derechos_autor', label: 'Derechos de autor' },
+  { value: 'acoso', label: 'Acoso' },
+  { value: 'desnudo', label: 'Desnudo' },
 ];
 
 export function ReportModal({
@@ -36,7 +36,7 @@ export function ReportModal({
   onSubmitReport,
   onBlockUser,
 }: ReportModalProps) {
-  const [reason, setReason] = useState<ReportReason>('contenido_inapropiado');
+  const [reason, setReason] = useState<ReportReason>('spam');
   const [details, setDetails] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -84,11 +84,11 @@ export function ReportModal({
       aria-modal="true"
       aria-label="Reportar o bloquear"
     >
-      <div className="w-full sm:max-w-md bg-[#121216] border-t sm:border border-white/10 rounded-t-3xl sm:rounded-2xl overflow-hidden pb-[env(safe-area-inset-bottom)]">
-        <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+      <div className="w-full sm:max-w-md bg-white dark:bg-[#161926] border-t sm:border border-zinc-200 dark:border-white/10 rounded-t-3xl sm:rounded-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] shadow-2xl">
+        <div className="px-5 py-4 border-b border-zinc-200 dark:border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
-            <Flag className="w-4 h-4 text-[#FF3B5C] shrink-0" />
-            <h2 className="font-display text-base font-bold text-white truncate">
+            <Flag className="w-4 h-4 text-[#6C5CE7] dark:text-[#8B7CF6] shrink-0" />
+            <h2 className="font-display text-base font-bold text-zinc-900 dark:text-white truncate">
               Moderar @{target.targetUsername}
             </h2>
           </div>
@@ -96,7 +96,7 @@ export function ReportModal({
             type="button"
             onClick={onClose}
             aria-label="Cerrar"
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-zinc-400 hover:text-white cursor-pointer"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -104,7 +104,7 @@ export function ReportModal({
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-400">
+            <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
               Motivo del reporte
             </label>
             <div className="grid grid-cols-1 gap-2">
@@ -115,8 +115,8 @@ export function ReportModal({
                   onClick={() => setReason(opt.value)}
                   className={`min-h-[42px] px-3.5 rounded-xl border text-left text-xs font-semibold transition-colors cursor-pointer ${
                     reason === opt.value
-                      ? 'bg-[#FF3B5C]/15 border-[#FF3B5C] text-white'
-                      : 'bg-zinc-900 border-white/10 text-zinc-300 hover:text-white'
+                      ? 'bg-[#6C5CE7]/15 border-[#6C5CE7] text-zinc-950 dark:text-white'
+                      : 'bg-zinc-100 dark:bg-[#0F111A] border-zinc-200 dark:border-white/10 text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white'
                   }`}
                 >
                   {opt.label}
@@ -126,7 +126,7 @@ export function ReportModal({
           </div>
 
           <div className="space-y-1.5">
-            <label htmlFor="report-details" className="text-xs font-medium text-zinc-400">
+            <label htmlFor="report-details" className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
               Detalles opcionales
             </label>
             <textarea
@@ -136,17 +136,17 @@ export function ReportModal({
               value={details}
               onChange={(e) => setDetails(e.target.value)}
               placeholder="Describe brevemente qué ocurrió..."
-              className="w-full bg-zinc-900 border border-white/10 focus:border-[#FF3B5C] rounded-xl px-3 py-2 text-xs text-white placeholder:text-zinc-500 focus:outline-none resize-none"
+              className="w-full bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3 py-2 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-500 focus:outline-none resize-none"
             />
           </div>
 
-          {errorMsg && <p className="text-xs text-[#FF3B5C]">{errorMsg}</p>}
+          {errorMsg && <p className="text-xs text-[#E84393]">{errorMsg}</p>}
 
           <div className="space-y-2.5 pt-1">
             <button
               type="submit"
               disabled={submitting}
-              className="w-full min-h-[44px] rounded-xl bg-[#FF3B5C] hover:bg-[#ff264b] disabled:opacity-50 text-white text-sm font-semibold transition-colors cursor-pointer"
+              className="w-full min-h-[44px] rounded-xl bg-neon-cta disabled:opacity-50 text-white text-sm font-semibold transition-colors cursor-pointer"
             >
               {submitting ? 'Enviando...' : 'Enviar reporte'}
             </button>
@@ -156,9 +156,9 @@ export function ReportModal({
                 type="button"
                 disabled={submitting}
                 onClick={() => void handleBlock()}
-                className="w-full min-h-[44px] rounded-xl border border-white/15 bg-zinc-900 hover:bg-white/5 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                className="w-full min-h-[44px] rounded-xl border border-zinc-200 dark:border-white/15 bg-zinc-100 dark:bg-[#0F111A] hover:bg-zinc-200 dark:hover:bg-white/5 text-zinc-800 dark:text-zinc-200 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
               >
-                <Ban className="w-4 h-4 text-[#FF3B5C]" />
+                <Ban className="w-4 h-4 text-[#E84393]" />
                 Bloquear a @{target.targetUsername}
               </button>
             )}

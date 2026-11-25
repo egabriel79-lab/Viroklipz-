@@ -110,9 +110,27 @@ export default defineConfig(() => {
       },
     ],
     resolve: {
+      dedupe: ['react', 'react-dom'],
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+    },
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'firebase/app',
+        'firebase/auth',
+        'firebase/firestore',
+        'firebase/storage',
+        'firebase/messaging',
+        'lucide-react',
+        'qrcode',
+        'workbox-window',
+      ],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

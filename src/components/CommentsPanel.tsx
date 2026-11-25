@@ -69,13 +69,13 @@ export function CommentsPanel({
   const panelBody = (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 shrink-0">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 dark:border-white/10 shrink-0">
         <div className="flex items-center gap-2.5">
-          <MessageCircle className="w-4 h-4 text-[#FF3B5C]" />
-          <h2 className="font-display font-bold text-base text-white">
+          <MessageCircle className="w-4 h-4 text-[#6C5CE7] dark:text-[#8B7CF6]" />
+          <h2 className="font-display font-bold text-base text-zinc-900 dark:text-white">
             Comentarios
           </h2>
-          <span className="font-mono text-xs tabular-nums text-zinc-400">
+          <span className="font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
             {comments.length}
           </span>
         </div>
@@ -83,7 +83,7 @@ export function CommentsPanel({
           type="button"
           onClick={onCloseMobile}
           aria-label="Cerrar comentarios"
-          className="xl:hidden min-h-[44px] min-w-[44px] -mr-2 flex items-center justify-center rounded-full text-zinc-400 hover:text-white transition-colors cursor-pointer"
+          className="xl:hidden min-h-[44px] min-w-[44px] -mr-2 flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors cursor-pointer"
         >
           <X className="w-5 h-5" />
         </button>
@@ -91,9 +91,9 @@ export function CommentsPanel({
 
       {/* Clip context */}
       {clip && (
-        <div className="px-5 py-3 border-b border-white/5 bg-white/[0.02] shrink-0">
-          <p className="text-xs text-zinc-400 truncate">
-            Klip de <span className="text-zinc-200 font-medium">@{clip.authorUsername}</span>
+        <div className="px-5 py-3 border-b border-zinc-200/70 dark:border-white/5 bg-zinc-50 dark:bg-white/[0.02] shrink-0">
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
+            Klip de <span className="text-zinc-800 dark:text-zinc-200 font-medium">@{clip.authorUsername}</span>
           </p>
         </div>
       )}
@@ -102,7 +102,7 @@ export function CommentsPanel({
       <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
         {comments.length === 0 ? (
           <div className="py-12 text-center space-y-2">
-            <p className="text-sm font-medium text-zinc-300">
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
               Aún no hay comentarios
             </p>
             <p className="text-xs text-zinc-500">
@@ -127,10 +127,10 @@ export function CommentsPanel({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 text-xs min-w-0">
-                      <span className="font-semibold text-zinc-200 truncate">
+                      <span className="font-semibold text-zinc-800 dark:text-zinc-200 truncate">
                         @{cmt.authorUsername}
                       </span>
-                      <span className="text-zinc-600" aria-hidden="true">
+                      <span className="text-zinc-400 dark:text-zinc-600" aria-hidden="true">
                         ·
                       </span>
                       <span className="text-zinc-500 whitespace-nowrap">
@@ -142,13 +142,13 @@ export function CommentsPanel({
                         type="button"
                         onClick={() => void onDeleteComment(cmt.id)}
                         aria-label="Eliminar comentario"
-                        className="p-1.5 text-zinc-500 hover:text-[#FF3B5C] transition-colors cursor-pointer"
+                        className="p-1.5 text-zinc-400 dark:text-zinc-500 hover:text-[#E84393] transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     )}
                   </div>
-                  <p className="text-sm text-zinc-200 mt-1 leading-relaxed break-words">
+                  <p className="text-sm text-zinc-800 dark:text-zinc-200 mt-1 leading-relaxed break-words">
                     {cmt.text}
                   </p>
                 </div>
@@ -159,11 +159,11 @@ export function CommentsPanel({
       </div>
 
       {/* Composer */}
-      <div className="p-4 border-t border-white/10 bg-[#121216] shrink-0">
+      <div className="p-4 border-t border-zinc-200 dark:border-white/10 bg-white dark:bg-[#161926] shrink-0">
         {currentUser ? (
           <form onSubmit={handleSubmit} className="space-y-2">
             {errorMsg && (
-              <p className="text-xs text-[#FF3B5C]">{errorMsg}</p>
+              <p className="text-xs text-[#E84393]">{errorMsg}</p>
             )}
             <div className="flex items-center gap-2">
               <input
@@ -172,13 +172,13 @@ export function CommentsPanel({
                 maxLength={MAX_COMMENT_LEN}
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder="Añade un comentario..."
-                className="flex-1 min-h-[44px] bg-zinc-900/90 border border-white/10 focus:border-[#FF3B5C] rounded-xl px-3.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none transition-colors"
+                className="flex-1 min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-500 focus:outline-none transition-colors"
               />
               <button
                 type="submit"
                 disabled={submitting || draft.trim().length === 0}
                 aria-label="Enviar comentario"
-                className="min-h-[44px] min-w-[44px] px-3.5 rounded-xl bg-[#FF3B5C] hover:bg-[#ff264b] disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
+                className="min-h-[44px] min-w-[44px] px-3.5 rounded-xl bg-neon-cta disabled:opacity-40 disabled:cursor-not-allowed text-white flex items-center justify-center transition-colors cursor-pointer"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -191,13 +191,13 @@ export function CommentsPanel({
           </form>
         ) : (
           <div className="flex items-center justify-between gap-3 py-1">
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
               Inicia sesión para comentar en Viroklipz.
             </p>
             <button
               type="button"
               onClick={onRequestSignIn}
-              className="px-4 py-2 rounded-xl bg-[#FF3B5C] hover:bg-[#ff264b] text-white text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+              className="px-4 py-2 rounded-xl bg-neon-cta text-white text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
             >
               Entrar
             </button>
@@ -210,7 +210,7 @@ export function CommentsPanel({
   return (
     <>
       {/* Desktop Docked Right Drawer (xl+) */}
-      <aside className="hidden xl:flex flex-col w-[360px] shrink-0 h-[calc(100dvh-2rem)] max-h-[820px] bg-[#121216] border border-white/10 rounded-2xl overflow-hidden">
+      <aside className="hidden xl:flex flex-col w-[360px] shrink-0 h-[calc(100dvh-2rem)] max-h-[820px] bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl overflow-hidden shadow-sm dark:shadow-none">
         {panelBody}
       </aside>
 
@@ -222,8 +222,8 @@ export function CommentsPanel({
             onClick={onCloseMobile}
             aria-hidden="true"
           />
-          <div className="h-[72dvh] max-h-[600px] bg-[#121216] border-t border-white/10 rounded-t-3xl flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
-            <div className="w-10 h-1.5 bg-zinc-700 rounded-full mx-auto mt-3 mb-1 shrink-0" />
+          <div className="h-[72dvh] max-h-[600px] bg-white dark:bg-[#161926] border-t border-zinc-200 dark:border-white/10 rounded-t-3xl flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
+            <div className="w-10 h-1.5 bg-zinc-300 dark:bg-zinc-700 rounded-full mx-auto mt-3 mb-1 shrink-0" />
             {panelBody}
           </div>
         </div>
