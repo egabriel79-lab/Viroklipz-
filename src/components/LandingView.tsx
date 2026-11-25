@@ -1,10 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   BarChart3,
   Check,
   Eye,
-  EyeOff,
   Flame,
   Gauge,
   Heart,
@@ -15,26 +14,18 @@ import {
   ShieldCheck,
   Smartphone,
   Video,
-  X,
 } from 'lucide-react';
 import { STARTER_CLIPS } from '../data/starterClips';
-import {
-  mapAuthErrorMessage,
-  signInWithEmail,
-  signInWithGoogle,
-  signUpWithEmail,
-} from '../lib/viroklipzService';
-import { MAX_DISPLAY_NAME_LEN, MAX_EMAIL_LEN } from '../lib/validation';
+import type { UserProfile } from '../types/viroklipz';
+import { AuthModal, type AuthModalMode } from './AuthModal';
 import { AvatarImg } from './AvatarImg';
 import { LegalModal } from './LegalModal';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface LandingViewProps {
-  onAuthSuccess: () => void;
+  onAuthSuccess: (profile: UserProfile) => void;
   onExploreGuest: () => void;
 }
-
-type AuthModalMode = 'login' | 'signup' | null;
 
 const HERO_SHOWCASE_CLIPS = STARTER_CLIPS.slice(0, 3);
 
@@ -62,16 +53,8 @@ const FAQ_ITEMS = [
 ];
 
 export function LandingView({ onAuthSuccess, onExploreGuest }: LandingViewProps) {
-  const [authMode, setAuthMode] = useState<AuthModalMode>(null);
+  const [authMode, setAuthMode] = useState<AuthModalMode | null>(null);
   const [showcaseIndex, setShowcaseIndex] = useState(0);
-
-  // Auth form fields
-  const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
   const [legalTab, setLegalTab] = useState<'terms' | 'privacy' | null>(null);
 
   const activeClip = HERO_SHOWCASE_CLIPS[showcaseIndex] || STARTER_CLIPS[0];
@@ -95,66 +78,8 @@ export function LandingView({ onAuthSuccess, onExploreGuest }: LandingViewProps)
     ogUrl.content = canonicalUrl;
   }, []);
 
-  const openAuthModal = (mode: 'login' | 'signup') => {
-    setAuthError(null);
-    setPassword('');
-    setShowPassword(false);
+  const openAuthModal = (mode: AuthModalMode) => {
     setAuthMode(mode);
-  };
-
-  const handleEmailSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setAuthError(null);
-
-    const trimmedEmail = email.trim();
-    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setAuthError('Introduce un correo electrónico válido.');
-      return;
-    }
-    if (password.length < 6) {
-      setAuthError('La contraseña debe tener al menos 6 caracteres.');
-      return;
-    }
-    if (authMode === 'signup' && displayName.trim().length < 2) {
-      setAuthError('Escribe tu nombre para crear tu perfil en Viroklipz.');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      if (authMode === 'signup') {
-        await signUpWithEmail({
-          displayName: displayName.trim(),
-          email: trimmedEmail,
-          password,
-        });
-      } else {
-        await signInWithEmail({
-          email: trimmedEmail,
-          password,
-        });
-      }
-      setAuthMode(null);
-      onAuthSuccess();
-    } catch (err) {
-      setAuthError(mapAuthErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleGoogleAuth = async () => {
-    setAuthError(null);
-    setSubmitting(true);
-    try {
-      await signInWithGoogle();
-      setAuthMode(null);
-      onAuthSuccess();
-    } catch (err) {
-      setAuthError(mapAuthErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
   };
 
   return (
@@ -743,184 +668,16 @@ export function LandingView({ onAuthSuccess, onExploreGuest }: LandingViewProps)
         </div>
       </footer>
 
-      {/* Auth Modal (Crear cuenta / Iniciar sesión) */}
-      {authMode && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="w-full max-w-md bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-3xl p-6 sm:p-7 space-y-5 my-auto shadow-2xl">
-            <div className="flex items-start justify-between gap-4">
-              <div className="space-y-1">
-                <h2 className="font-display text-xl sm:text-2xl font-bold text-zinc-900 dark:text-white">
-                  {authMode === 'signup' ? 'Crear cuenta en Viroklipz' : 'Iniciar sesión'}
-                </h2>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  {authMode === 'signup'
-                    ? 'Completa tus datos para entrar directo a la pantalla Inicio.'
-                    : 'Accede con tu correo electrónico o con Google.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAuthMode(null)}
-                aria-label="Cerrar"
-                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-white/5 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Mode Switcher */}
-            <div className="grid grid-cols-2 gap-1 p-1 bg-zinc-100 dark:bg-[#0F111A] rounded-xl border border-zinc-200 dark:border-white/10">
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthError(null);
-                  setAuthMode('signup');
-                }}
-                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  authMode === 'signup'
-                    ? 'bg-white dark:bg-white text-zinc-950 shadow-sm'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white'
-                }`}
-              >
-                Crear cuenta
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthError(null);
-                  setAuthMode('login');
-                }}
-                className={`min-h-[40px] rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  authMode === 'login'
-                    ? 'bg-white dark:bg-white text-zinc-950 shadow-sm'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white'
-                }`}
-              >
-                Iniciar sesión
-              </button>
-            </div>
-
-            {authError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/40 text-xs text-rose-600 dark:text-rose-300 leading-relaxed">
-                {authError}
-              </div>
-            )}
-
-            <form onSubmit={handleEmailSubmit} className="space-y-3.5">
-              {authMode === 'signup' && (
-                <div>
-                  <label htmlFor="auth-name" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
-                    Nombre completo
-                  </label>
-                  <input
-                    id="auth-name"
-                    type="text"
-                    required
-                    maxLength={MAX_DISPLAY_NAME_LEN}
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    placeholder="Ej. Eloy Gabriel"
-                    className="w-full min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label htmlFor="auth-email" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
-                  Correo electrónico
-                </label>
-                <input
-                  id="auth-email"
-                  type="email"
-                  required
-                  autoComplete="email"
-                  maxLength={MAX_EMAIL_LEN}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="tucorreo@ejemplo.com"
-                  className="w-full min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="auth-password" className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
-                  Contraseña
-                </label>
-                <div className="relative">
-                  <input
-                    id="auth-password"
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    minLength={6}
-                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
-                    className="w-full min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl pl-3.5 pr-11 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
-                    className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[40px] min-w-[40px] flex items-center justify-center text-zinc-500 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white cursor-pointer"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full min-h-[46px] rounded-xl bg-neon-cta disabled:opacity-50 text-white text-sm font-semibold transition-all cursor-pointer"
-              >
-                {submitting
-                  ? authMode === 'signup'
-                    ? 'Creando cuenta...'
-                    : 'Iniciando sesión...'
-                  : authMode === 'signup'
-                    ? 'Crear cuenta'
-                    : 'Iniciar sesión'}
-              </button>
-            </form>
-
-            <div className="flex items-center gap-3 text-xs text-zinc-500">
-              <span className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
-              <span>o</span>
-              <span className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
-            </div>
-
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => void handleGoogleAuth()}
-              className="w-full min-h-[44px] px-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-900 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-white/15 disabled:opacity-50 text-zinc-900 dark:text-white text-sm font-semibold transition-colors cursor-pointer"
-            >
-              Continuar con Google
-            </button>
-
-            <p className="text-[11px] text-center text-zinc-500 leading-relaxed">
-              Al continuar aceptas nuestros{' '}
-              <button
-                type="button"
-                onClick={() => setLegalTab('terms')}
-                className="text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white underline underline-offset-2 cursor-pointer"
-              >
-                Términos de Uso
-              </button>{' '}
-              y la{' '}
-              <button
-                type="button"
-                onClick={() => setLegalTab('privacy')}
-                className="text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white underline underline-offset-2 cursor-pointer"
-              >
-                Política de Privacidad
-              </button>
-              .
-            </p>
-          </div>
-        </div>
-      )}
+      <AuthModal
+        isOpen={authMode !== null}
+        initialMode={authMode ?? 'login'}
+        onClose={() => setAuthMode(null)}
+        onSuccess={(profile) => {
+          setAuthMode(null);
+          onAuthSuccess(profile);
+        }}
+        onOpenLegal={(tab) => setLegalTab(tab)}
+      />
 
       <LegalModal
         isOpen={legalTab !== null}

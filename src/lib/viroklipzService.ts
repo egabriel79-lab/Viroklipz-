@@ -1,8 +1,11 @@
 import {
   createUserWithEmailAndPassword,
   deleteUser,
+  getRedirectResult,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   updateProfile,
   type User,
@@ -221,48 +224,96 @@ function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
   };
 }
 
-export async function signInWithGoogle(): Promise<User> {
-  const result = await signInWithPopup(auth, googleProvider);
-  return result.user;
+function extractAuthErrorCode(err: unknown): string {
+  if (typeof err === 'object' && err !== null && 'code' in err) {
+    return String((err as { code?: unknown }).code || '');
+  }
+  if (err instanceof Error) {
+    const match = err.message.match(/auth\/[a-z0-9-]+/i);
+    if (match) return match[0].toLowerCase();
+  }
+  return '';
+}
+
+function canUseRedirectFallback(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self === window.top;
+  } catch {
+    return false;
+  }
+}
+
+export async function signInWithGoogle(): Promise<UserProfile | null> {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    return await ensureUserProfile(result.user);
+  } catch (err) {
+    const code = extractAuthErrorCode(err);
+    const shouldRedirect =
+      canUseRedirectFallback() &&
+      (code === 'auth/popup-blocked' ||
+        code === 'auth/operation-not-supported-in-this-environment' ||
+        code === 'auth/web-storage-unsupported');
+    if (shouldRedirect) {
+      await signInWithRedirect(auth, googleProvider);
+      return null;
+    }
+    throw err;
+  }
+}
+
+export async function completeGoogleRedirectIfPending(): Promise<UserProfile | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (!result?.user) return null;
+    return await ensureUserProfile(result.user);
+  } catch (err) {
+    console.warn('Google redirect auth warning:', err);
+    throw err;
+  }
 }
 
 export async function signUpWithEmail(input: {
   displayName: string;
   email: string;
   password: string;
-}): Promise<User> {
-  const cleanName = input.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador Viroklipz';
-  const cleanEmail = input.email.trim().slice(0, MAX_EMAIL_LEN);
+}): Promise<UserProfile> {
+  const cleanName =
+    input.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador Viroklipz';
+  const cleanEmail = input.email.trim().toLowerCase().slice(0, MAX_EMAIL_LEN);
   const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
   try {
     await updateProfile(credential.user, { displayName: cleanName });
   } catch {
     // Non-fatal if displayName update lags
   }
-  await ensureUserProfile(credential.user, {
+  return await ensureUserProfile(credential.user, {
     displayName: cleanName,
     email: cleanEmail,
   });
-  return credential.user;
 }
 
 export async function signInWithEmail(input: {
   email: string;
   password: string;
-}): Promise<User> {
-  const cleanEmail = input.email.trim().slice(0, MAX_EMAIL_LEN);
+}): Promise<UserProfile> {
+  const cleanEmail = input.email.trim().toLowerCase().slice(0, MAX_EMAIL_LEN);
   const credential = await signInWithEmailAndPassword(auth, cleanEmail, input.password);
-  return credential.user;
+  return await ensureUserProfile(credential.user, { email: cleanEmail });
+}
+
+export async function resetUserPassword(email: string): Promise<void> {
+  const cleanEmail = email.trim().toLowerCase().slice(0, MAX_EMAIL_LEN);
+  await sendPasswordResetEmail(auth, cleanEmail);
 }
 
 export function mapAuthErrorMessage(err: unknown): string {
-  const code =
-    typeof err === 'object' && err !== null && 'code' in err
-      ? String((err as { code?: unknown }).code || '')
-      : '';
+  const code = extractAuthErrorCode(err);
+  const host = typeof window !== 'undefined' ? window.location.hostname : '';
   switch (code) {
     case 'auth/email-already-in-use':
-      return 'Ya existe una cuenta registrada con ese correo electrónico.';
+      return 'Ya existe una cuenta registrada con ese correo electrónico. Prueba iniciar sesión.';
     case 'auth/invalid-email':
       return 'El formato del correo electrónico no es válido.';
     case 'auth/weak-password':
@@ -270,15 +321,50 @@ export function mapAuthErrorMessage(err: unknown): string {
     case 'auth/user-not-found':
     case 'auth/wrong-password':
     case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
       return 'Correo electrónico o contraseña incorrectos.';
+    case 'auth/user-disabled':
+      return 'Esta cuenta está deshabilitada o suspendida.';
     case 'auth/too-many-requests':
-      return 'Demasiados intentos seguidos. Espera un momento e inténtalo de nuevo.';
+      return 'Demasiados intentos seguidos. Espera unos minutos e inténtalo de nuevo.';
     case 'auth/operation-not-allowed':
-      return 'El acceso con correo y contraseña aún no está activado en Firebase Console. Actívalo en Authentication > Sign-in method o usa Google.';
+    case 'auth/admin-restricted-operation':
+    case 'auth/configuration-not-found':
+      return 'Este método de acceso no está activado en Firebase Console. Activa "Correo electrónico/Contraseña" y "Google" en Authentication > Sign-in method.';
+    case 'auth/unauthorized-domain':
+      return host
+        ? `El dominio "${host}" no está autorizado en Firebase Console. Agrégalo en Authentication > Settings > Authorized domains.`
+        : 'Este dominio no está autorizado en Firebase Console (Authentication > Settings > Authorized domains).';
+    case 'auth/popup-blocked':
+      return 'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes o inicia sesión con tu correo y contraseña.';
     case 'auth/popup-closed-by-user':
-      return 'Se cerró la ventana de inicio de sesión.';
-    default:
-      return 'No se pudo completar la autenticación. Inténtalo nuevamente.';
+      return 'Se cerró la ventana de Google antes de finalizar. Inténtalo de nuevo.';
+    case 'auth/cancelled-popup-request':
+      return 'Ya había una ventana de Google abierta. Toca "Continuar con Google" una sola vez.';
+    case 'auth/account-exists-with-different-credential':
+      return 'Este correo ya está vinculado a otro método de acceso. Inicia sesión con el método que usaste originalmente.';
+    case 'auth/network-request-failed':
+      return 'Error de red. Verifica tu conexión a internet e inténtalo nuevamente.';
+    case 'auth/web-storage-unsupported':
+      return 'Tu navegador bloquea las cookies o almacenamiento necesario para iniciar sesión. Desactiva el modo privado estricto o permite cookies.';
+    case 'auth/internal-error':
+      return 'Error interno de Firebase Auth. Verifica que este dominio esté autorizado y el proveedor activado en Firebase Console.';
+    default: {
+      if (err instanceof Error && err.message.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(err.message) as { error?: string; operationType?: string };
+          if (parsed.error?.toLowerCase().includes('permission')) {
+            return 'Tu cuenta se autenticó, pero Firestore rechazó el guardado del perfil. Revisa las reglas de Firestore.';
+          }
+          if (parsed.error) {
+            return `Error al cargar el perfil en Firestore: ${parsed.error}`;
+          }
+        } catch {
+          // Ignore malformed JSON
+        }
+      }
+      return 'No se pudo completar la autenticación. Verifica tu conexión o la configuración en Firebase Console.';
+    }
   }
 }
 
@@ -298,7 +384,57 @@ function isTransientUnavailableError(err: unknown): boolean {
   );
 }
 
+function buildFallbackProfile(
+  user: User,
+  overrides?: { displayName?: string; email?: string },
+): UserProfile {
+  const effectiveEmail = (overrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
+  const rawDisplayName = (
+    overrides?.displayName ||
+    user.displayName ||
+    effectiveEmail.split('@')[0] ||
+    'Creador Viroklipz'
+  ).trim();
+  const displayName = rawDisplayName.slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
+  const username = sanitizeUsername(
+    effectiveEmail.split('@')[0] || displayName || 'creador',
+    user.uid,
+  );
+  const now = Date.now();
+  return {
+    uid: user.uid,
+    username,
+    displayName,
+    bio: '',
+    avatarUrl: sanitizeAvatarUrl(user.photoURL),
+    isPublic: true,
+    followersCount: 0,
+    createdAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+const inFlightProfileEnsures = new Map<string, Promise<UserProfile>>();
+
 export async function ensureUserProfile(
+  user: User,
+  overrides?: { displayName?: string; email?: string },
+): Promise<UserProfile> {
+  const existingTask = inFlightProfileEnsures.get(user.uid);
+  if (existingTask && !overrides?.displayName) {
+    return existingTask;
+  }
+
+  const task = ensureUserProfileInternal(user, overrides).finally(() => {
+    if (inFlightProfileEnsures.get(user.uid) === task) {
+      inFlightProfileEnsures.delete(user.uid);
+    }
+  });
+  inFlightProfileEnsures.set(user.uid, task);
+  return task;
+}
+
+async function ensureUserProfileInternal(
   user: User,
   overrides?: { displayName?: string; email?: string },
 ): Promise<UserProfile> {
@@ -315,27 +451,7 @@ export async function ensureUserProfile(
         snap = await getDoc(userRef);
       } catch (retryErr) {
         if (isTransientUnavailableError(retryErr)) {
-          const effectiveEmail = (overrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
-          const rawDisplayName = (
-            overrides?.displayName ||
-            user.displayName ||
-            effectiveEmail.split('@')[0] ||
-            'Creador Viroklipz'
-          ).trim();
-          const displayName = rawDisplayName.slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
-          const username = sanitizeUsername(effectiveEmail.split('@')[0] || displayName || 'creador', user.uid);
-          const now = Date.now();
-          return {
-            uid: user.uid,
-            username,
-            displayName,
-            bio: '',
-            avatarUrl: sanitizeAvatarUrl(user.photoURL),
-            isPublic: true,
-            followersCount: 0,
-            createdAtMs: now,
-            updatedAtMs: now,
-          };
+          return buildFallbackProfile(user, overrides);
         }
         handleFirestoreError(retryErr, OperationType.GET, userPath);
       }
@@ -376,53 +492,41 @@ export async function ensureUserProfile(
     };
   }
 
+  const fallback = buildFallbackProfile(user, overrides);
   const effectiveEmail = (overrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
-  const rawDisplayName = (overrides?.displayName || user.displayName || effectiveEmail.split('@')[0] || 'Creador Viroklipz').trim();
-  const displayName = rawDisplayName.slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
-  const username = sanitizeUsername(effectiveEmail.split('@')[0] || displayName || 'creador', user.uid);
-  const avatarUrl = sanitizeAvatarUrl(user.photoURL);
 
   try {
     await setDoc(userRef, {
       uid: user.uid,
-      username,
-      displayName,
+      username: fallback.username,
+      displayName: fallback.displayName,
       bio: '',
-      avatarUrl,
+      avatarUrl: fallback.avatarUrl,
       isPublic: true,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
+    if (isTransientUnavailableError(err)) {
+      return fallback;
+    }
     handleFirestoreError(err, OperationType.CREATE, userPath);
   }
 
-  const privatePath = `users/${user.uid}/private/info`;
   try {
     await setDoc(doc(db, 'users', user.uid, 'private', 'info'), {
       uid: user.uid,
       firstName: '',
       lastName: '',
       phone: '',
-      email: '',
+      email: effectiveEmail,
       updatedAt: serverTimestamp(),
     });
   } catch (err) {
-    handleFirestoreError(err, OperationType.CREATE, privatePath);
+    console.warn('No se pudo inicializar private/info (no bloquea el acceso):', err);
   }
 
-  const now = Date.now();
-  return {
-    uid: user.uid,
-    username,
-    displayName,
-    bio: '',
-    avatarUrl,
-    isPublic: true,
-    followersCount: 0,
-    createdAtMs: now,
-    updatedAtMs: now,
-  };
+  return fallback;
 }
 
 export async function updateUserProfile(

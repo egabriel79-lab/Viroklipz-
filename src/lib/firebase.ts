@@ -35,6 +35,7 @@ export const db = createFirestoreInstance();
 export const auth = getAuth(app);
 export const storage = firebaseConfig.storageBucket ? getStorage(app) : null;
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export enum OperationType {
   CREATE = 'create',

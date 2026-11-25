@@ -16,6 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
+import { AuthModal } from './components/AuthModal';
 import { AvatarImg } from './components/AvatarImg';
 import { ChatView } from './components/ChatView';
 import { ClipPlayer } from './components/ClipPlayer';
@@ -55,16 +56,17 @@ import { ThemeProvider } from './context/ThemeContext';
 import {
   addClipComment,
   blockUser,
+  completeGoogleRedirectIfPending,
   deleteClipComment,
   deleteUserAccount,
   deleteUserClip,
   ensureUserProfile,
+  mapAuthErrorMessage,
   publishClip,
   recordDailyStreakAction,
   registerClipShare,
   registerClipView,
   saveStatusNote,
-  signInWithGoogle,
   signOutUser,
   submitContentReport,
   subscribeActiveLiveStreams,
@@ -166,6 +168,7 @@ function ViroklipzApp() {
   const [isCommentsMobileOpen, setIsCommentsMobileOpen] = useState(false);
   const [viewedCreator, setViewedCreator] = useState<CreatorSummary | null>(null);
   const [allowGuestFeed, setAllowGuestFeed] = useState<boolean>(Boolean(initialDeepLink));
+  const [guestAuthModalOpen, setGuestAuthModalOpen] = useState(false);
   const [pendingDeepLink, setPendingDeepLink] = useState<DeepLinkTarget | null>(initialDeepLink);
   const [customAvatarUrl, setCustomAvatarUrl] = useState<string | null>(null);
   const [customBannerUrl, setCustomBannerUrl] = useState<string | null>(null);
@@ -236,8 +239,24 @@ function ViroklipzApp() {
     });
   }, [showToast]);
 
-  // Auth listener
+  // Auth listener & redirect completion
   useEffect(() => {
+    void completeGoogleRedirectIfPending()
+      .then((profile) => {
+        if (profile) {
+          setCurrentUser(profile);
+          setAllowGuestFeed(false);
+          setGuestAuthModalOpen(false);
+          setSection('feed');
+          setFeedTab('para_ti');
+          setActiveIndex(0);
+          showToast('Sesión iniciada en Viroklipz');
+        }
+      })
+      .catch((err) => {
+        showToast(mapAuthErrorMessage(err));
+      });
+
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setCurrentUser(null);
@@ -256,12 +275,13 @@ function ViroklipzApp() {
         setCurrentUser(profile);
       } catch (err) {
         console.error('Error loading user profile:', err);
+        showToast(mapAuthErrorMessage(err));
       } finally {
         setAuthReady(true);
       }
     });
     return () => unsub();
-  }, []);
+  }, [showToast]);
 
   // Public clips, active live streams & creator profiles listeners
   useEffect(() => {
@@ -840,17 +860,8 @@ function ViroklipzApp() {
     canonicalEl.setAttribute('href', canonicalUrl);
   }, [section, viewedCreator, effectiveUser, activeClip]);
 
-  const handleSignIn = async () => {
-    setAllowGuestFeed(false);
-    try {
-      await signInWithGoogle();
-      setSection('feed');
-      setFeedTab('para_ti');
-      setActiveIndex(0);
-      showToast('Sesión iniciada en Viroklipz');
-    } catch {
-      showToast('Inicia sesión o crea tu cuenta en Viroklipz');
-    }
+  const handleSignIn = () => {
+    setGuestAuthModalOpen(true);
   };
 
   const handleSignOut = async () => {
@@ -1070,7 +1081,8 @@ function ViroklipzApp() {
     return (
       <>
         <LandingView
-          onAuthSuccess={() => {
+          onAuthSuccess={(profile) => {
+            setCurrentUser(profile);
             setAllowGuestFeed(false);
             setFeedTab('para_ti');
             setSection('feed');
@@ -1861,6 +1873,21 @@ function ViroklipzApp() {
           showToast('Reporte enviado. Gracias por ayudar a mantener Viroklipz seguro', 'success');
         }}
         onBlockUser={handleBlockUser}
+      />
+
+      <AuthModal
+        isOpen={guestAuthModalOpen}
+        initialMode="login"
+        onClose={() => setGuestAuthModalOpen(false)}
+        onSuccess={(profile) => {
+          setCurrentUser(profile);
+          setGuestAuthModalOpen(false);
+          setAllowGuestFeed(false);
+          setFeedTab('para_ti');
+          setSection('feed');
+          setActiveIndex(0);
+          showToast('Sesión iniciada en Viroklipz', 'success');
+        }}
       />
 
       <OfflineIndicator />
