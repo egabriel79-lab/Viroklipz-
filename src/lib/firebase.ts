@@ -33,6 +33,7 @@ function createFirestoreInstance(): Firestore {
 
 export const db = createFirestoreInstance();
 export const auth = getAuth(app);
+auth.languageCode = 'es';
 export const storage = firebaseConfig.storageBucket ? getStorage(app) : null;
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

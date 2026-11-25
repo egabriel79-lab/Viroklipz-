@@ -377,25 +377,17 @@ export function mapAuthErrorMessage(err: unknown): string {
     case 'auth/operation-not-allowed':
     case 'auth/admin-restricted-operation':
     case 'auth/configuration-not-found':
-      return 'Este método de acceso no está activado en Firebase Console. Activa "Correo electrónico/Contraseña" y "Google" en Authentication > Sign-in method.';
+      return 'El acceso con correo electrónico y contraseña aún no está activado en Firebase Console. Actívalo en Authentication > Sign-in method > Correo electrónico/Contraseña.';
     case 'auth/unauthorized-domain':
       return host
         ? `El dominio "${host}" no está autorizado en Firebase Console. Agrégalo en Authentication > Settings > Authorized domains.`
         : 'Este dominio no está autorizado en Firebase Console (Authentication > Settings > Authorized domains).';
-    case 'auth/popup-blocked':
-      return 'El navegador bloqueó la ventana de Google. Permite las ventanas emergentes o inicia sesión con tu correo y contraseña.';
-    case 'auth/popup-closed-by-user':
-      return 'Se cerró la ventana de Google antes de finalizar. Inténtalo de nuevo.';
-    case 'auth/cancelled-popup-request':
-      return 'Ya había una ventana de Google abierta. Toca "Continuar con Google" una sola vez.';
-    case 'auth/account-exists-with-different-credential':
-      return 'Este correo ya está vinculado a otro método de acceso. Inicia sesión con el método que usaste originalmente.';
     case 'auth/network-request-failed':
       return 'Error de red. Verifica tu conexión a internet e inténtalo nuevamente.';
     case 'auth/web-storage-unsupported':
       return 'Tu navegador bloquea las cookies o almacenamiento necesario para iniciar sesión. Desactiva el modo privado estricto o permite cookies.';
     case 'auth/internal-error':
-      return 'Error interno de Firebase Auth. Verifica que este dominio esté autorizado y el proveedor activado en Firebase Console.';
+      return 'Error interno de Firebase Auth. Verifica que este dominio esté autorizado y que Correo electrónico/Contraseña esté activado en Firebase Console.';
     default: {
       if (err instanceof Error && err.message.startsWith('{')) {
         try {
@@ -410,7 +402,9 @@ export function mapAuthErrorMessage(err: unknown): string {
           // Ignore malformed JSON
         }
       }
-      return 'No se pudo completar la autenticación. Verifica tu conexión o la configuración en Firebase Console.';
+      return code
+        ? `No se pudo completar la autenticación (${code}). Verifica la configuración en Firebase Console.`
+        : 'No se pudo completar la autenticación. Verifica tu conexión o la configuración en Firebase Console.';
     }
   }
 }
@@ -474,7 +468,7 @@ export async function ensureUserProfile(
   const mergedOverrides = overrides ?? (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined);
 
   const existingTask = inFlightProfileEnsures.get(user.uid);
-  if (existingTask && !mergedOverrides?.displayName) {
+  if (existingTask) {
     return existingTask;
   }
 

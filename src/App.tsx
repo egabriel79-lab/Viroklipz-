@@ -56,7 +56,6 @@ import { ThemeProvider } from './context/ThemeContext';
 import {
   addClipComment,
   blockUser,
-  completeGoogleRedirectIfPending,
   deleteClipComment,
   deleteUserAccount,
   deleteUserClip,
@@ -239,24 +238,8 @@ function ViroklipzApp() {
     });
   }, [showToast]);
 
-  // Auth listener & redirect completion
+  // Auth listener
   useEffect(() => {
-    void completeGoogleRedirectIfPending()
-      .then((profile) => {
-        if (profile) {
-          setCurrentUser(profile);
-          setAllowGuestFeed(false);
-          setGuestAuthModalOpen(false);
-          setSection('feed');
-          setFeedTab('para_ti');
-          setActiveIndex(0);
-          showToast('Sesión iniciada en Viroklipz');
-        }
-      })
-      .catch((err) => {
-        showToast(mapAuthErrorMessage(err));
-      });
-
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setCurrentUser(null);
