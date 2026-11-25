@@ -1879,6 +1879,7 @@ function ViroklipzApp() {
         isOpen={guestAuthModalOpen}
         initialMode="login"
         onClose={() => setGuestAuthModalOpen(false)}
+        onNotify={(msg) => showToast(msg)}
         onSuccess={(profile) => {
           setCurrentUser(profile);
           setGuestAuthModalOpen(false);

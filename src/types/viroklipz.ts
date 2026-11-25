@@ -38,6 +38,13 @@ export interface BlockedUserEntry {
   createdAtMs: number;
 }
 
+export interface GuardianAuthorizationData {
+  name: string;
+  surname: string;
+  id: string;
+  authorized: boolean;
+}
+
 export interface UserProfile {
   uid: string;
   username: string;
@@ -54,6 +61,9 @@ export interface UserProfile {
   mutedCommunityChat?: boolean;
   fanLevel?: number;
   fanPoints?: number;
+  age?: number;
+  isMinor?: boolean;
+  guardianData?: GuardianAuthorizationData;
   createdAtMs: number;
   updatedAtMs: number;
 }

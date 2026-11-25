@@ -78,6 +78,7 @@ import type {
   AudienceFavorite,
   CreatorLiveConfig,
   FanClubPerk,
+  GuardianAuthorizationData,
   LiveAudience,
   LiveQuality,
   LiveStreamMessage,
@@ -274,24 +275,70 @@ export async function completeGoogleRedirectIfPending(): Promise<UserProfile | n
   }
 }
 
+export interface EnsureProfileOverrides {
+  displayName?: string;
+  email?: string;
+  age?: number;
+  isMinor?: boolean;
+  guardianData?: GuardianAuthorizationData;
+}
+
+const pendingSignupOverridesByEmail = new Map<string, EnsureProfileOverrides>();
+
 export async function signUpWithEmail(input: {
   displayName: string;
   email: string;
   password: string;
+  age: number;
+  guardianData?: GuardianAuthorizationData;
 }): Promise<UserProfile> {
   const cleanName =
     input.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador Viroklipz';
   const cleanEmail = input.email.trim().toLowerCase().slice(0, MAX_EMAIL_LEN);
-  const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
-  try {
-    await updateProfile(credential.user, { displayName: cleanName });
-  } catch {
-    // Non-fatal if displayName update lags
+  const parsedAge = Math.floor(Number(input.age));
+  if (!Number.isFinite(parsedAge) || parsedAge < 1 || parsedAge > 120) {
+    throw new Error('Ingresa una edad válida entre 1 y 120 años.');
   }
-  return await ensureUserProfile(credential.user, {
+
+  const isMinor = parsedAge < 18;
+  let cleanGuardian: GuardianAuthorizationData | undefined;
+
+  if (isMinor) {
+    const gName = (input.guardianData?.name || '').trim().slice(0, 60);
+    const gSurname = (input.guardianData?.surname || '').trim().slice(0, 60);
+    const gId = (input.guardianData?.id || '').trim().slice(0, 32);
+    const authorized = Boolean(input.guardianData?.authorized);
+    if (!gName || !gSurname || gId.length < 3 || !authorized) {
+      throw new Error('Debes contar con la autorización de un tutor legal');
+    }
+    cleanGuardian = {
+      name: gName,
+      surname: gSurname,
+      id: gId,
+      authorized: true,
+    };
+  }
+
+  const overrides: EnsureProfileOverrides = {
     displayName: cleanName,
     email: cleanEmail,
-  });
+    age: parsedAge,
+    isMinor,
+    ...(cleanGuardian ? { guardianData: cleanGuardian } : {}),
+  };
+
+  pendingSignupOverridesByEmail.set(cleanEmail, overrides);
+  try {
+    const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
+    try {
+      await updateProfile(credential.user, { displayName: cleanName });
+    } catch {
+      // Non-fatal if displayName update lags
+    }
+    return await ensureUserProfile(credential.user, overrides);
+  } finally {
+    pendingSignupOverridesByEmail.delete(cleanEmail);
+  }
 }
 
 export async function signInWithEmail(input: {
@@ -386,7 +433,7 @@ function isTransientUnavailableError(err: unknown): boolean {
 
 function buildFallbackProfile(
   user: User,
-  overrides?: { displayName?: string; email?: string },
+  overrides?: EnsureProfileOverrides,
 ): UserProfile {
   const effectiveEmail = (overrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
   const rawDisplayName = (
@@ -409,6 +456,9 @@ function buildFallbackProfile(
     avatarUrl: sanitizeAvatarUrl(user.photoURL),
     isPublic: true,
     followersCount: 0,
+    ...(typeof overrides?.age === 'number' ? { age: overrides.age } : {}),
+    ...(typeof overrides?.isMinor === 'boolean' ? { isMinor: overrides.isMinor } : {}),
+    ...(overrides?.guardianData ? { guardianData: overrides.guardianData } : {}),
     createdAtMs: now,
     updatedAtMs: now,
   };
@@ -418,14 +468,17 @@ const inFlightProfileEnsures = new Map<string, Promise<UserProfile>>();
 
 export async function ensureUserProfile(
   user: User,
-  overrides?: { displayName?: string; email?: string },
+  overrides?: EnsureProfileOverrides,
 ): Promise<UserProfile> {
+  const emailKey = (overrides?.email || user.email || '').trim().toLowerCase();
+  const mergedOverrides = overrides ?? (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined);
+
   const existingTask = inFlightProfileEnsures.get(user.uid);
-  if (existingTask && !overrides?.displayName) {
+  if (existingTask && !mergedOverrides?.displayName) {
     return existingTask;
   }
 
-  const task = ensureUserProfileInternal(user, overrides).finally(() => {
+  const task = ensureUserProfileInternal(user, mergedOverrides).finally(() => {
     if (inFlightProfileEnsures.get(user.uid) === task) {
       inFlightProfileEnsures.delete(user.uid);
     }
@@ -436,8 +489,12 @@ export async function ensureUserProfile(
 
 async function ensureUserProfileInternal(
   user: User,
-  overrides?: { displayName?: string; email?: string },
+  overrides?: EnsureProfileOverrides,
 ): Promise<UserProfile> {
+  const emailKey = (overrides?.email || user.email || '').trim().toLowerCase();
+  const effectiveOverrides =
+    overrides ?? (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined);
+
   const userPath = `users/${user.uid}`;
   const userRef = doc(db, 'users', user.uid);
 
@@ -451,7 +508,7 @@ async function ensureUserProfileInternal(
         snap = await getDoc(userRef);
       } catch (retryErr) {
         if (isTransientUnavailableError(retryErr)) {
-          return buildFallbackProfile(user, overrides);
+          return buildFallbackProfile(user, effectiveOverrides);
         }
         handleFirestoreError(retryErr, OperationType.GET, userPath);
       }
@@ -465,10 +522,14 @@ async function ensureUserProfileInternal(
     const rawPresence = String(d.presenceStatus || 'online');
     const presenceStatus: PresenceStatus =
       rawPresence === 'busy' || rawPresence === 'hidden' ? rawPresence : 'online';
+    const rawGuardian =
+      d.guardianData && typeof d.guardianData === 'object'
+        ? (d.guardianData as Record<string, unknown>)
+        : null;
     return {
       uid: String(d.uid || user.uid),
       username: String(d.username || sanitizeUsername(user.email?.split('@')[0] || 'creador', user.uid)),
-      displayName: String(d.displayName || overrides?.displayName || user.displayName || 'Creador'),
+      displayName: String(d.displayName || effectiveOverrides?.displayName || user.displayName || 'Creador'),
       bio: String(d.bio || ''),
       bioColor: typeof d.bioColor === 'string' && d.bioColor ? d.bioColor : '#FFFFFF',
       personalLink: typeof d.personalLink === 'string' ? d.personalLink : '',
@@ -487,25 +548,53 @@ async function ensureUserProfileInternal(
         typeof d.fanPoints === 'number' && Number.isFinite(d.fanPoints)
           ? Math.max(0, Math.floor(d.fanPoints))
           : 0,
+      age: typeof d.age === 'number' ? d.age : undefined,
+      isMinor: typeof d.isMinor === 'boolean' ? d.isMinor : undefined,
+      guardianData: rawGuardian
+        ? {
+            name: String(rawGuardian.name || ''),
+            surname: String(rawGuardian.surname || ''),
+            id: String(rawGuardian.id || ''),
+            authorized: Boolean(rawGuardian.authorized),
+          }
+        : undefined,
       createdAtMs: toMillis(d.createdAt),
       updatedAtMs: toMillis(d.updatedAt),
     };
   }
 
-  const fallback = buildFallbackProfile(user, overrides);
-  const effectiveEmail = (overrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
+  const fallback = buildFallbackProfile(user, effectiveOverrides);
+  const effectiveEmail = (effectiveOverrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
+  const userDocPayload: Record<string, unknown> = {
+    uid: user.uid,
+    username: fallback.username,
+    displayName: fallback.displayName,
+    bio: '',
+    avatarUrl: fallback.avatarUrl,
+    isPublic: true,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  if (typeof effectiveOverrides?.age === 'number') {
+    userDocPayload.age = effectiveOverrides.age;
+  }
+  if (typeof effectiveOverrides?.isMinor === 'boolean') {
+    userDocPayload.isMinor = effectiveOverrides.isMinor;
+  } else {
+    userDocPayload.isMinor = false;
+  }
+  if (effectiveOverrides?.isMinor && effectiveOverrides.guardianData) {
+    userDocPayload.guardianData = {
+      name: effectiveOverrides.guardianData.name,
+      surname: effectiveOverrides.guardianData.surname,
+      id: effectiveOverrides.guardianData.id,
+      authorized: true,
+    };
+  }
 
   try {
-    await setDoc(userRef, {
-      uid: user.uid,
-      username: fallback.username,
-      displayName: fallback.displayName,
-      bio: '',
-      avatarUrl: fallback.avatarUrl,
-      isPublic: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(userRef, userDocPayload);
   } catch (err) {
     if (isTransientUnavailableError(err)) {
       return fallback;

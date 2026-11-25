@@ -90,6 +90,18 @@
           "maxLength": 120,
           "description": "Optional account email if synced for admin moderation."
         },
+        "age": {
+          "type": "number",
+          "description": "Declared user age at registration."
+        },
+        "isMinor": {
+          "type": "boolean",
+          "description": "True when the user registered under 18 years old."
+        },
+        "guardianData": {
+          "type": "object",
+          "description": "Legal guardian authorization map { name, surname, id, authorized } required when isMinor is true."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"

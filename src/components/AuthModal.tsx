@@ -1,10 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Eye, EyeOff, X } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { Check, Eye, EyeOff, ShieldCheck, X } from 'lucide-react';
 import {
   mapAuthErrorMessage,
-  resetUserPassword,
   signInWithEmail,
-  signInWithGoogle,
   signUpWithEmail,
 } from '../lib/viroklipzService';
 import { MAX_DISPLAY_NAME_LEN, MAX_EMAIL_LEN } from '../lib/validation';
@@ -17,6 +16,7 @@ interface AuthModalProps {
   initialMode: AuthModalMode;
   onClose: () => void;
   onSuccess: (profile: UserProfile) => void;
+  onNotify?: (message: string) => void;
   onOpenLegal?: (tab: 'terms' | 'privacy') => void;
 }
 
@@ -25,23 +25,58 @@ export function AuthModal({
   initialMode,
   onClose,
   onSuccess,
+  onNotify,
   onOpenLegal,
 }: AuthModalProps) {
   const [mode, setMode] = useState<AuthModalMode>(initialMode);
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [ageInput, setAgeInput] = useState('');
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianSurname, setGuardianSurname] = useState('');
+  const [guardianId, setGuardianId] = useState('');
+  const [guardianAuthorized, setGuardianAuthorized] = useState(false);
+
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [resettingPassword, setResettingPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [authInfo, setAuthInfo] = useState<string | null>(null);
+  const [localSnackBar, setLocalSnackBar] = useState<string | null>(null);
+  const snackTimerRef = useRef<number | null>(null);
+
+  const parsedAge =
+    ageInput.trim() === '' ? null : Number.parseInt(ageInput.trim(), 10);
+  const isValidAgeNumber =
+    parsedAge !== null && Number.isFinite(parsedAge) && parsedAge >= 1 && parsedAge <= 120;
+  const isMinor = mode === 'signup' && isValidAgeNumber && parsedAge < 18;
+
+  const triggerSnackBar = (message: string) => {
+    if (onNotify) {
+      onNotify(message);
+      return;
+    }
+    setLocalSnackBar(message);
+    if (snackTimerRef.current) {
+      window.clearTimeout(snackTimerRef.current);
+    }
+    snackTimerRef.current = window.setTimeout(() => {
+      setLocalSnackBar(null);
+    }, 3500);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (snackTimerRef.current) {
+        window.clearTimeout(snackTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       setMode(initialMode);
       setAuthError(null);
-      setAuthInfo(null);
+      setLocalSnackBar(null);
       setPassword('');
       setShowPassword(false);
     }
@@ -51,14 +86,13 @@ export function AuthModal({
 
   const switchMode = (nextMode: AuthModalMode) => {
     setAuthError(null);
-    setAuthInfo(null);
+    setLocalSnackBar(null);
     setMode(nextMode);
   };
 
-  const handleEmailSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setAuthError(null);
-    setAuthInfo(null);
 
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
@@ -69,19 +103,53 @@ export function AuthModal({
       setAuthError('La contraseña debe tener al menos 6 caracteres.');
       return;
     }
-    if (mode === 'signup' && displayName.trim().length < 2) {
-      setAuthError('Escribe tu nombre para crear tu perfil en Viroklipz.');
-      return;
+
+    if (mode === 'signup') {
+      if (displayName.trim().length < 2) {
+        setAuthError('Escribe tu nombre para crear tu perfil en Viroklipz.');
+        return;
+      }
+      if (!isValidAgeNumber || parsedAge === null) {
+        setAuthError('Ingresa tu edad en años (entre 1 y 120).');
+        return;
+      }
+
+      if (parsedAge < 18) {
+        const cleanGuardianName = guardianName.trim();
+        const cleanGuardianSurname = guardianSurname.trim();
+        const cleanGuardianId = guardianId.trim();
+        if (
+          !cleanGuardianName ||
+          !cleanGuardianSurname ||
+          cleanGuardianId.length < 3 ||
+          !guardianAuthorized
+        ) {
+          const msg = 'Debes contar con la autorización de un tutor legal';
+          setAuthError(msg);
+          triggerSnackBar(msg);
+          return;
+        }
+      }
     }
 
     setSubmitting(true);
     try {
       const profile =
-        mode === 'signup'
+        mode === 'signup' && parsedAge !== null
           ? await signUpWithEmail({
               displayName: displayName.trim(),
               email: trimmedEmail,
               password,
+              age: parsedAge,
+              guardianData:
+                parsedAge < 18
+                  ? {
+                      name: guardianName.trim(),
+                      surname: guardianSurname.trim(),
+                      id: guardianId.trim(),
+                      authorized: guardianAuthorized,
+                    }
+                  : undefined,
             })
           : await signInWithEmail({
               email: trimmedEmail,
@@ -89,48 +157,23 @@ export function AuthModal({
             });
       onSuccess(profile);
     } catch (err) {
-      setAuthError(mapAuthErrorMessage(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleForgotPassword = async () => {
-    setAuthError(null);
-    setAuthInfo(null);
-    const trimmedEmail = email.trim().toLowerCase();
-    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setAuthError('Escribe tu correo electrónico arriba y luego toca "¿Olvidaste tu contraseña?".');
-      return;
-    }
-    setResettingPassword(true);
-    try {
-      await resetUserPassword(trimmedEmail);
-      setAuthInfo(
-        `Te enviamos un enlace para restablecer tu contraseña a ${trimmedEmail}. Revisa tu bandeja o spam.`,
-      );
-    } catch (err) {
-      setAuthError(mapAuthErrorMessage(err));
-    } finally {
-      setResettingPassword(false);
-    }
-  };
-
-  const handleGoogleAuth = async () => {
-    setAuthError(null);
-    setAuthInfo(null);
-    setSubmitting(true);
-    try {
-      const profile = await signInWithGoogle();
-      if (profile) {
-        onSuccess(profile);
+      if (
+        err instanceof Error &&
+        err.message === 'Debes contar con la autorización de un tutor legal'
+      ) {
+        setAuthError(err.message);
+        triggerSnackBar(err.message);
+      } else {
+        setAuthError(mapAuthErrorMessage(err));
       }
-    } catch (err) {
-      setAuthError(mapAuthErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
   };
+
+  const fullGuardianDisplay =
+    `${guardianName.trim()} ${guardianSurname.trim()}`.trim() || '[Nombre del tutor]';
+  const guardianIdDisplay = guardianId.trim() || '[Cédula]';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -142,8 +185,8 @@ export function AuthModal({
             </h2>
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
               {mode === 'signup'
-                ? 'Completa tus datos o continúa con Google para entrar a Viroklipz.'
-                : 'Accede con tu correo electrónico o con tu cuenta de Google.'}
+                ? 'Completa tus datos para crear tu cuenta en Viroklipz.'
+                : 'Ingresa tu correo electrónico y contraseña para continuar.'}
             </p>
           </div>
           <button
@@ -188,32 +231,53 @@ export function AuthModal({
           </div>
         )}
 
-        {authInfo && (
-          <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed">
-            {authInfo}
-          </div>
-        )}
-
-        <form onSubmit={handleEmailSubmit} className="space-y-3.5" noValidate>
+        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
           {mode === 'signup' && (
-            <div>
-              <label
-                htmlFor="auth-name"
-                className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5"
-              >
-                Nombre completo
-              </label>
-              <input
-                id="auth-name"
-                type="text"
-                required
-                autoComplete="name"
-                maxLength={MAX_DISPLAY_NAME_LEN}
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Ej. Eloy Gabriel"
-                className="w-full min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2">
+                <label
+                  htmlFor="auth-name"
+                  className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5"
+                >
+                  Nombre completo
+                </label>
+                <input
+                  id="auth-name"
+                  type="text"
+                  required
+                  autoComplete="name"
+                  maxLength={MAX_DISPLAY_NAME_LEN}
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Ej. Eloy Gabriel"
+                  className="w-full min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="auth-age"
+                  className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5"
+                >
+                  Edad
+                </label>
+                <input
+                  id="auth-age"
+                  type="number"
+                  min={1}
+                  max={120}
+                  step={1}
+                  inputMode="numeric"
+                  required
+                  value={ageInput}
+                  onChange={(e) => {
+                    const nextVal = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
+                    setAgeInput(nextVal);
+                  }}
+                  placeholder="Ej. 18"
+                  className="w-full min-h-[44px] bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
+                />
+              </div>
             </div>
           )}
 
@@ -242,24 +306,12 @@ export function AuthModal({
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label
-                htmlFor="auth-password"
-                className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300"
-              >
-                Contraseña
-              </label>
-              {mode === 'login' && (
-                <button
-                  type="button"
-                  disabled={resettingPassword || submitting}
-                  onClick={() => void handleForgotPassword()}
-                  className="text-[11px] font-semibold text-[#00B4D8] hover:underline underline-offset-2 disabled:opacity-50 cursor-pointer"
-                >
-                  {resettingPassword ? 'Enviando...' : '¿Olvidaste tu contraseña?'}
-                </button>
-              )}
-            </div>
+            <label
+              htmlFor="auth-password"
+              className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5"
+            >
+              Contraseña
+            </label>
             <div className="relative">
               <input
                 id="auth-password"
@@ -283,6 +335,114 @@ export function AuthModal({
             </div>
           </div>
 
+          {/* Sección condicional animada para menores de 18 años */}
+          <AnimatePresence initial={false}>
+            {isMinor && (
+              <motion.div
+                key="guardian-section"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.28, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <div className="pt-1">
+                  <div className="rounded-2xl bg-zinc-50 dark:bg-[#0F111A] border border-[#6C5CE7]/40 p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-[#6C5CE7]/15 flex items-center justify-center shrink-0">
+                        <ShieldCheck className="w-4 h-4 text-[#6C5CE7] dark:text-[#8B7CF6]" />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-bold text-zinc-900 dark:text-white">
+                          Autorización de Representante Legal
+                        </h3>
+                        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                          Requerida para cuentas de menores de 18 años.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label
+                          htmlFor="guardian-name"
+                          className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          Nombres del representante
+                        </label>
+                        <input
+                          id="guardian-name"
+                          type="text"
+                          maxLength={60}
+                          value={guardianName}
+                          onChange={(e) => setGuardianName(e.target.value)}
+                          placeholder="Ej. María Elena"
+                          className="w-full min-h-[40px] bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label
+                          htmlFor="guardian-surname"
+                          className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1"
+                        >
+                          Apellidos del representante
+                        </label>
+                        <input
+                          id="guardian-surname"
+                          type="text"
+                          maxLength={60}
+                          value={guardianSurname}
+                          onChange={(e) => setGuardianSurname(e.target.value)}
+                          placeholder="Ej. Pérez Gómez"
+                          className="w-full min-h-[40px] bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="guardian-id"
+                        className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1"
+                      >
+                        Cédula/DNI
+                      </label>
+                      <input
+                        id="guardian-id"
+                        type="text"
+                        maxLength={32}
+                        value={guardianId}
+                        onChange={(e) => setGuardianId(e.target.value)}
+                        placeholder="Ej. V-12345678"
+                        className="w-full min-h-[40px] bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 focus:border-[#00B4D8] rounded-xl px-3 text-xs text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <label className="flex items-start gap-2.5 pt-1 cursor-pointer select-none">
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={guardianAuthorized}
+                        onClick={() => setGuardianAuthorized((v) => !v)}
+                        className={`mt-0.5 w-5 h-5 rounded-md border flex items-center justify-center shrink-0 transition-colors cursor-pointer ${
+                          guardianAuthorized
+                            ? 'bg-gradient-to-r from-[#00B4D8] to-[#E84393] border-transparent text-white'
+                            : 'bg-white dark:bg-[#161926] border-zinc-300 dark:border-white/25 text-transparent'
+                        }`}
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </button>
+                      <span className="text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                        Yo, <strong className="text-zinc-900 dark:text-white">{fullGuardianDisplay}</strong>, con cédula{' '}
+                        <strong className="text-zinc-900 dark:text-white">{guardianIdDisplay}</strong>, en calidad de representante legal, autorizo expresamente el registro del menor en Viroklipz. Asumo total responsabilidad por el contenido publicado y el uso que el menor haga de la plataforma.
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <button
             type="submit"
             disabled={submitting}
@@ -298,40 +458,7 @@ export function AuthModal({
           </button>
         </form>
 
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
-          <span className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
-          <span>o</span>
-          <span className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
-        </div>
-
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={() => void handleGoogleAuth()}
-          className="w-full min-h-[44px] px-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-900 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-white/15 disabled:opacity-50 text-zinc-900 dark:text-white text-sm font-semibold transition-colors inline-flex items-center justify-center gap-2.5 cursor-pointer"
-        >
-          <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="#4285F4"
-              d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
-            />
-            <path
-              fill="#34A853"
-              d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.09.73-2.48 1.16-4.22 1.16-3.24 0-5.99-2.19-6.97-5.14H1.03v3.14C3.04 21.14 7.21 24 12 24Z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M5.03 14.01c-.25-.73-.39-1.51-.39-2.31s.14-1.58.39-2.31V6.25H1.03C.37 7.57 0 9.05 0 11.7s.37 4.13 1.03 5.45l4-3.14Z"
-            />
-            <path
-              fill="#EA4335"
-              d="M12 4.75c1.79 0 3.4.62 4.67 1.83l3.5-3.5C18.07 1.19 15.3 0 12 0 7.21 0 3.04 2.86 1.03 6.25l4 3.14C6.01 6.94 8.76 4.75 12 4.75Z"
-            />
-          </svg>
-          Continuar con Google
-        </button>
-
-        {onOpenLegal && (
+        {mode === 'signup' && onOpenLegal && (
           <p className="text-[11px] text-center text-zinc-500 leading-relaxed">
             Al continuar aceptas nuestros{' '}
             <button
@@ -353,6 +480,17 @@ export function AuthModal({
           </p>
         )}
       </div>
+
+      {/* SnackBar fallback si no se provee onNotify */}
+      {localSnackBar && (
+        <div
+          role="status"
+          aria-live="assertive"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-3 rounded-xl bg-rose-600 text-white text-xs font-semibold shadow-2xl border border-rose-400/50 max-w-[92vw] text-center"
+        >
+          {localSnackBar}
+        </div>
+      )}
     </div>
   );
 }

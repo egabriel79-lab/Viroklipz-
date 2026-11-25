@@ -71,12 +71,22 @@ service cloud.firestore {
     }
 
     // --- Validation Blueprints ---
+    function isValidGuardianData(g) {
+      return g is map
+        && g.keys().hasAll(['name', 'surname', 'id', 'authorized'])
+        && g.keys().hasOnly(['name', 'surname', 'id', 'authorized'])
+        && g.name is string && g.name.size() >= 1 && g.name.size() <= 60
+        && g.surname is string && g.surname.size() >= 1 && g.surname.size() <= 60
+        && g.id is string && g.id.size() >= 3 && g.id.size() <= 32
+        && g.authorized is bool && g.authorized == true;
+    }
+
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll([
           'uid', 'username', 'displayName', 'bio', 'avatarUrl', 'isPublic', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isAdmin', 'coins', 'followersCount', 'country', 'email', 'createdAt', 'updatedAt'
+          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isAdmin', 'coins', 'followersCount', 'country', 'email', 'age', 'isMinor', 'guardianData', 'createdAt', 'updatedAt'
         ])
         && data.uid == userId
         && isValidUsername(data.username)
@@ -98,6 +108,10 @@ service cloud.firestore {
         && (!('followersCount' in data) || (data.followersCount is int && data.followersCount >= 0 && data.followersCount <= 100000000))
         && (!('country' in data) || (data.country is string && data.country.size() <= 64))
         && (!('email' in data) || (data.email is string && data.email.size() <= 120))
+        && (!('age' in data) || (data.age is int && data.age >= 1 && data.age <= 120))
+        && (!('isMinor' in data) || data.isMinor is bool)
+        && (!('guardianData' in data) || isValidGuardianData(data.guardianData))
+        && (!('isMinor' in data) || data.isMinor == false || ('guardianData' in data && isValidGuardianData(data.guardianData)))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
