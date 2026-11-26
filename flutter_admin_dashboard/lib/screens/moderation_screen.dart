@@ -30,8 +30,8 @@ class _ModerationScreenState extends State<ModerationScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Reporte ignorado y eliminado de la cola.'),
-          backgroundColor: AdminColors.royalBlue,
+          content: Text('Reporte ignorado y removido de la cola.'),
+          backgroundColor: AdminColors.electricBlue,
         ),
       );
     } catch (e) {
@@ -57,12 +57,15 @@ class _ModerationScreenState extends State<ModerationScreen> {
           side: const BorderSide(color: AdminColors.border),
         ),
         title: const Text(
-          'Eliminar video reportado',
+          'Eliminar Video Reportado',
           style: TextStyle(color: AdminColors.textPrimary),
         ),
         content: Text(
-          'Esta acción eliminará permanentemente el documento del video (${report.effectiveVideoId}) y este reporte en Firestore. ¿Deseas continuar?',
-          style: const TextStyle(color: AdminColors.textSecondary, fontSize: 13.5),
+          'Se eliminará el video (${report.effectiveVideoId}) y este reporte de Firestore. ¿Deseas continuar?',
+          style: const TextStyle(
+            color: AdminColors.textSecondary,
+            fontSize: 13.5,
+          ),
         ),
         actions: [
           TextButton(
@@ -72,7 +75,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AdminColors.danger,
+              backgroundColor: AdminColors.magenta,
               foregroundColor: Colors.white,
             ),
             child: const Text('Eliminar Video'),
@@ -89,7 +92,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Video eliminado y reporte cerrado correctamente.'),
+          content: Text('Video eliminado y reporte resuelto correctamente.'),
           backgroundColor: AdminColors.success,
         ),
       );
@@ -133,7 +136,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Moderación de Contenido',
+                    'Moderación de Videos Reportados',
                     style: TextStyle(
                       color: AdminColors.textPrimary,
                       fontSize: 22,
@@ -142,7 +145,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Revisa videos reportados desde la colección reports y toma acción inmediata',
+                    'Lectura en vivo de la colección reports en Firestore',
                     style: TextStyle(
                       color: AdminColors.textSecondary,
                       fontSize: 13,
@@ -151,16 +154,19 @@ class _ModerationScreenState extends State<ModerationScreen> {
                 ],
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                 decoration: BoxDecoration(
                   color: AdminColors.surface,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AdminColors.border),
+                  border: Border.all(
+                    color: AdminColors.magenta.withValues(alpha: 0.4),
+                  ),
                 ),
                 child: Text(
                   '${filteredReports.length} reportes',
                   style: const TextStyle(
-                    color: AdminColors.electricBlue,
+                    color: AdminColors.magenta,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
                   ),
@@ -182,12 +188,12 @@ class _ModerationScreenState extends State<ModerationScreen> {
                 children: [
                   Icon(
                     Icons.verified_rounded,
-                    color: AdminColors.success,
+                    color: AdminColors.electricBlue,
                     size: 42,
                   ),
                   SizedBox(height: 12),
                   Text(
-                    'No hay reportes pendientes en este momento',
+                    'No hay videos reportados en cola',
                     style: TextStyle(
                       color: AdminColors.textPrimary,
                       fontSize: 15,
@@ -196,7 +202,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Todos los videos reportados han sido atendidos.',
+                    'Todos los reportes de Firestore han sido atendidos.',
                     style: TextStyle(
                       color: AdminColors.textSecondary,
                       fontSize: 13,
@@ -223,156 +229,205 @@ class _ModerationScreenState extends State<ModerationScreen> {
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(color: AdminColors.border),
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: AdminColors.danger.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: AdminColors.danger.withValues(alpha: 0.4),
+                  child: LayoutBuilder(
+                    builder: (context, cardConstraints) {
+                      final isWideCard = cardConstraints.maxWidth >= 680;
+                      final detailsWidget = Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color:
+                                  AdminColors.magenta.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color:
+                                    AdminColors.magenta.withValues(alpha: 0.45),
+                              ),
+                            ),
+                            child: const Icon(
+                              Icons.flag_rounded,
+                              color: AdminColors.magenta,
+                              size: 22,
+                            ),
                           ),
-                        ),
-                        child: const Icon(
-                          Icons.flag_rounded,
-                          color: AdminColors.danger,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              crossAxisAlignment: WrapCrossAlignment.center,
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        AdminColors.danger.withValues(alpha: 0.16),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    _reasonLabel(report.reason),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 6,
+                                  crossAxisAlignment: WrapCrossAlignment.center,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 9,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AdminColors.magenta
+                                            .withValues(alpha: 0.16),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(
+                                        'Motivo: ${_reasonLabel(report.reason)}',
+                                        style: const TextStyle(
+                                          color: Color(0xFFF9A8D4),
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    Text(
+                                      'ID Video: ${report.effectiveVideoId}',
+                                      style: const TextStyle(
+                                        color: AdminColors.electricBlue,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    Text(
+                                      '• ${_formatDateTime(report.createdAt)}',
+                                      style: const TextStyle(
+                                        color: AdminColors.textMuted,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                if (clip != null) ...[
+                                  Text(
+                                    'Creador: @${clip.authorUsername} (${clip.authorDisplayName})',
                                     style: const TextStyle(
-                                      color: Color(0xFFFCA5A5),
-                                      fontSize: 11.5,
+                                      color: AdminColors.textPrimary,
+                                      fontSize: 13.5,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
-                                ),
-                                Text(
-                                  'ID Video: ${report.effectiveVideoId.isNotEmpty ? report.effectiveVideoId : report.targetId}',
-                                  style: const TextStyle(
-                                    color: AdminColors.electricBlue,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    clip.caption.isNotEmpty
+                                        ? clip.caption
+                                        : 'Video sin descripción',
+                                    style: const TextStyle(
+                                      color: AdminColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
                                   ),
-                                ),
-                                Text(
-                                  '• ${_formatDateTime(report.createdAt)}',
-                                  style: const TextStyle(
-                                    color: AdminColors.textMuted,
-                                    fontSize: 12,
+                                ] else
+                                  Text(
+                                    'Autor objetivo: ${report.targetAuthorId}',
+                                    style: const TextStyle(
+                                      color: AdminColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
                                   ),
-                                ),
+                                if (report.details.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Container(
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: AdminColors.background,
+                                      borderRadius: BorderRadius.circular(10),
+                                      border:
+                                          Border.all(color: AdminColors.border),
+                                    ),
+                                    child: Text(
+                                      'Detalle: ${report.details}',
+                                      style: const TextStyle(
+                                        color: AdminColors.textSecondary,
+                                        fontSize: 12.5,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ),
-                            const SizedBox(height: 10),
-                            if (clip != null) ...[
-                              Text(
-                                'Creador: @${clip.authorUsername} (${clip.authorDisplayName})',
-                                style: const TextStyle(
-                                  color: AdminColors.textPrimary,
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                clip.caption.isNotEmpty
-                                    ? clip.caption
-                                    : 'Video sin descripción',
-                                style: const TextStyle(
-                                  color: AdminColors.textSecondary,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ] else
-                              Text(
-                                'Autor objetivo: ${report.targetAuthorId}',
-                                style: const TextStyle(
-                                  color: AdminColors.textSecondary,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            if (report.details.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: AdminColors.background,
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: AdminColors.border),
-                                ),
-                                child: Text(
-                                  'Detalle del reporte: ${report.details}',
-                                  style: const TextStyle(
-                                    color: AdminColors.textSecondary,
-                                    fontSize: 12.5,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: isBusy ? null : () => _ignoreReport(report),
-                            icon: const Icon(Icons.close_rounded, size: 16),
-                            label: const Text('Ignorar'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: AdminColors.textPrimary,
-                              side: const BorderSide(color: AdminColors.border),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          ElevatedButton.icon(
-                            onPressed: isBusy
-                                ? null
-                                : () => _deleteVideoAndReport(report),
-                            icon: const Icon(Icons.delete_forever_rounded, size: 16),
-                            label: const Text('Eliminar Video'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AdminColors.danger,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
                             ),
                           ),
                         ],
-                      ),
-                    ],
+                      );
+
+                      final ignoreButton = OutlinedButton.icon(
+                        onPressed: isBusy ? null : () => _ignoreReport(report),
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        label: const Text('Ignorar Reporte'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AdminColors.electricBlue,
+                          side: BorderSide(
+                            color: AdminColors.electricBlue
+                                .withValues(alpha: 0.45),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                        ),
+                      );
+
+                      final deleteButton = ElevatedButton.icon(
+                        onPressed: isBusy
+                            ? null
+                            : () => _deleteVideoAndReport(report),
+                        icon: const Icon(
+                          Icons.delete_forever_rounded,
+                          size: 16,
+                        ),
+                        label: const Text('Eliminar Video'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AdminColors.magenta,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(11),
+                          ),
+                        ),
+                      );
+
+                      if (isWideCard) {
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: detailsWidget),
+                            const SizedBox(width: 16),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                ignoreButton,
+                                const SizedBox(height: 10),
+                                deleteButton,
+                              ],
+                            ),
+                          ],
+                        );
+                      }
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          detailsWidget,
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              ignoreButton,
+                              deleteButton,
+                            ],
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 );
               },

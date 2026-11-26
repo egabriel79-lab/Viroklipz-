@@ -18,6 +18,9 @@ class AdminFirestoreService {
 
   static final AdminFirestoreService instance = AdminFirestoreService._();
 
+  /// Correo exclusivo autorizado para administrar Viroklipz.
+  static const String allowedAdminEmail = 'Egabriel79@gmail.com';
+
   FirebaseAuth get auth => FirebaseAuth.instance;
 
   FirebaseFirestore get db => FirebaseFirestore.instanceFor(
@@ -25,24 +28,52 @@ class AdminFirestoreService {
         databaseId: DefaultFirebaseOptions.firestoreDatabaseId,
       );
 
-  /// Verifica en Firestore que el usuario autenticado tenga `isAdmin: true`
-  /// dentro de su documento `/users/{uid}`.
-  Future<AdminUserModel> verifyUserIsAdmin(User firebaseUser) async {
-    final userDoc = await db.collection('users').doc(firebaseUser.uid).get();
-    final data = userDoc.data();
-    final hasIsAdmin = userDoc.exists && data != null && data['isAdmin'] == true;
+  static bool isAuthorizedAdminEmail(String? email) {
+    return (email ?? '').trim().toLowerCase() ==
+        allowedAdminEmail.toLowerCase();
+  }
 
-    if (!hasIsAdmin) {
+  /// Verifica que la sesión pertenezca exactamente a `Egabriel79@gmail.com`.
+  /// Si no coincide, cierra la sesión en FirebaseAuth y lanza Acceso Denegado.
+  Future<AdminUserModel> verifyUserIsAdmin(User firebaseUser) async {
+    if (!isAuthorizedAdminEmail(firebaseUser.email)) {
       await auth.signOut();
       throw const AdminAccessDeniedException(
-        'Acceso Denegado: Tu cuenta no tiene el campo isAdmin: true en Firestore.',
+        'Acceso Denegado: Solo la cuenta autorizada Egabriel79@gmail.com puede ingresar.',
       );
     }
 
-    return AdminUserModel.fromDoc(userDoc);
+    try {
+      final userDoc = await db.collection('users').doc(firebaseUser.uid).get();
+      if (userDoc.exists) {
+        return AdminUserModel.fromDoc(userDoc);
+      }
+    } catch (_) {
+      // Si el perfil aún no existe en Firestore, construimos la sesión del dueño verificado.
+    }
+
+    final displayName = (firebaseUser.displayName ?? '').trim().isNotEmpty
+        ? firebaseUser.displayName!.trim()
+        : 'Admin Viroklipz';
+
+    return AdminUserModel(
+      uid: firebaseUser.uid,
+      username: 'admin.viroklipz',
+      displayName: displayName,
+      email: firebaseUser.email ?? allowedAdminEmail,
+      avatarUrl: firebaseUser.photoURL ?? '',
+      country: 'Global',
+      coins: 0,
+      followersCount: 0,
+      fanLevel: 50,
+      isAdmin: true,
+      isBanned: false,
+      isPublic: true,
+      createdAt: DateTime.now(),
+    );
   }
 
-  /// Inicia sesión con correo y contraseña y valida `isAdmin: true`.
+  /// Inicia sesión con correo y contraseña y valida `Egabriel79@gmail.com`.
   Future<AdminUserModel> signInAdmin({
     required String email,
     required String password,
@@ -54,7 +85,9 @@ class AdminFirestoreService {
 
     final user = credential.user;
     if (user == null) {
-      throw const AdminAccessDeniedException('No se pudo validar la sesión.');
+      throw const AdminAccessDeniedException(
+        'Acceso Denegado: No se pudo validar la sesión.',
+      );
     }
 
     return verifyUserIsAdmin(user);
@@ -94,13 +127,14 @@ class AdminFirestoreService {
         .map((snapshot) => snapshot.docs.map(AdminLiveModel.fromDoc).toList());
   }
 
-  /// Actualiza `banned` en `/users/{uid}` para suspender o reactivar la cuenta.
+  /// Actualiza `isBanned` (y `banned` para compatibilidad) en `/users/{uid}`.
   Future<void> setUserBanned({
     required String uid,
-    required bool banned,
+    required bool isBanned,
   }) async {
     await db.collection('users').doc(uid).update({
-      'banned': banned,
+      'isBanned': isBanned,
+      'banned': isBanned,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

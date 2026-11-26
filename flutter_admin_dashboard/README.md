@@ -5,7 +5,8 @@ Panel de administración independiente en **Flutter Web** conectado a la misma b
 ## Requisitos previos en Firebase
 
 1. Habilita **Email/Password** en Firebase Authentication (Consola de Firebase -> Authentication -> Sign-in method).
-2. En Firestore (`users/{tu_uid}`), agrega el campo booleano `isAdmin: true` al documento del administrador (además de mantener `firestore.rules` actualizado).
+2. Inicia sesión únicamente con la cuenta autorizada `Egabriel79@gmail.com` (cualquier otro correo recibe **Acceso Denegado** y se cierra su sesión automáticamente).
+3. Asegúrate de desplegar `firestore.rules` para habilitar lectura de métricas, suspensión de usuarios (`isBanned: true`) y moderación de `reports`/`clips`.
 
 ## Ejecutar como proyecto independiente
 

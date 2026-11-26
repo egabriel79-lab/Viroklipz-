@@ -68,6 +68,10 @@
           "type": "boolean",
           "description": "Account suspension flag updated exclusively by admins."
         },
+        "isBanned": {
+          "type": "boolean",
+          "description": "Account suspension flag updated exclusively by admins from the Flutter Admin Dashboard."
+        },
         "isAdmin": {
           "type": "boolean",
           "description": "Administrator privilege flag provisioned server-side or via console; never user-writable."
@@ -75,6 +79,14 @@
         "coins": {
           "type": "number",
           "description": "Viroklipz virtual coin balance."
+        },
+        "freeRoses": {
+          "type": "number",
+          "description": "Bonus free Roses granted from the Welcome Offer."
+        },
+        "welcomeRechargeClaimed": {
+          "type": "boolean",
+          "description": "Whether the user has already claimed the first recharge welcome offer."
         },
         "followersCount": {
           "type": "number",
@@ -800,6 +812,10 @@
           "type": "string",
           "maxLength": 300
         },
+        "guests": {
+          "type": "array",
+          "description": "Bounded array of accepted ViroParty guest UIDs currently in the multi-guest grid."
+        },
         "audioPreset": {
           "type": "string",
           "enum": ["urban_beat", "sunset_house", "lofi_espresso", "alpine_rush", "analog_synth"]
@@ -921,7 +937,7 @@
         },
         "kind": {
           "type": "string",
-          "enum": ["chat", "like", "gift"]
+          "enum": ["chat", "like", "gift", "join"]
         },
         "giftName": {
           "type": "string",
@@ -1005,6 +1021,117 @@
         }
       },
       "required": ["creatorUid", "fanPerks", "audienceFavorites", "updatedAt"]
+    },
+    "CoinRecharge": {
+      "title": "CoinRecharge",
+      "description": "Verified VexPay coin recharge receipt stored under user's recharges.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "packageId": { "type": "string", "enum": ["pack_starter", "pack_plus", "pack_pro", "pack_vip"] },
+        "coinsCredited": { "type": "number" },
+        "bonusRoses": { "type": "number" },
+        "priceUsd": { "type": "number" },
+        "provider": { "type": "string", "enum": ["VexPay"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "packageId", "coinsCredited", "bonusRoses", "priceUsd", "provider", "createdAt"]
+    },
+    "LiveBattle": {
+      "title": "LiveBattle",
+      "description": "Real-time ViroArena PK battle between two creators with countdown timer and dual point bars.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "hostStreamId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["active", "ended"] },
+        "durationSec": { "type": "number" },
+        "endsAtMs": { "type": "number" },
+        "creator1Uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creator1Username": { "type": "string", "minLength": 3, "maxLength": 24, "pattern": "^[a-z0-9._]{3,24}$" },
+        "creator1DisplayName": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "creator1AvatarUrl": { "type": "string", "maxLength": 300 },
+        "creator1PreviewUrl": { "type": "string", "maxLength": 300 },
+        "creator1StreamUrl": { "type": "string", "maxLength": 300 },
+        "creator1Points": { "type": "number" },
+        "creator1WinStreak": { "type": "number" },
+        "creator2Uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creator2Username": { "type": "string", "minLength": 3, "maxLength": 24, "pattern": "^[a-z0-9._]{3,24}$" },
+        "creator2DisplayName": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "creator2AvatarUrl": { "type": "string", "maxLength": 300 },
+        "creator2PreviewUrl": { "type": "string", "maxLength": 300 },
+        "creator2StreamUrl": { "type": "string", "maxLength": 300 },
+        "creator2Points": { "type": "number" },
+        "creator2WinStreak": { "type": "number" },
+        "lastGiftSender": { "type": "string", "maxLength": 40 },
+        "lastGiftName": { "type": "string", "maxLength": 40 },
+        "lastGiftTarget": { "type": "string", "enum": ["creator1", "creator2"] },
+        "lastGiftPoints": { "type": "number" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id", "status", "durationSec", "endsAtMs",
+        "creator1Uid", "creator1Username", "creator1DisplayName", "creator1AvatarUrl", "creator1PreviewUrl", "creator1Points", "creator1WinStreak",
+        "creator2Uid", "creator2Username", "creator2DisplayName", "creator2AvatarUrl", "creator2PreviewUrl", "creator2Points", "creator2WinStreak",
+        "startedAt", "updatedAt"
+      ]
+    },
+    "LiveBattleGift": {
+      "title": "LiveBattleGift",
+      "description": "Real-time gift contribution sent to Creator 1 or Creator 2 in a ViroArena PK battle.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "battleId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "targetSlot": { "type": "string", "enum": ["creator1", "creator2"] },
+        "senderUid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "senderUsername": { "type": "string", "minLength": 3, "maxLength": 24, "pattern": "^[a-z0-9._]{3,24}$" },
+        "senderDisplayName": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "senderAvatarUrl": { "type": "string", "maxLength": 300 },
+        "giftId": { "type": "string", "maxLength": 32 },
+        "giftName": { "type": "string", "maxLength": 40 },
+        "coins": { "type": "number" },
+        "points": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "battleId", "targetSlot", "senderUid", "senderUsername", "senderDisplayName", "senderAvatarUrl", "giftId", "giftName", "coins", "points", "createdAt"]
+    },
+    "LiveGuest": {
+      "title": "LiveGuest",
+      "description": "Accepted ViroParty multi-guest participant inside a LiveStream grid.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "streamId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 24, "pattern": "^[a-z0-9._]{3,24}$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "avatarUrl": { "type": "string", "maxLength": 300 },
+        "fanLevel": { "type": "number" },
+        "seatIndex": { "type": "number" },
+        "muted": { "type": "boolean" },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "streamId", "username", "displayName", "avatarUrl", "fanLevel", "seatIndex", "muted", "joinedAt"]
+    },
+    "LiveJoinRequest": {
+      "title": "LiveJoinRequest",
+      "description": "Viewer request queued to join the ViroParty multi-guest grid.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "liveId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 24, "pattern": "^[a-z0-9._]{3,24}$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "avatarUrl": { "type": "string", "maxLength": 300 },
+        "fanLevel": { "type": "number" },
+        "seatIndex": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "liveId", "userId", "username", "displayName", "avatarUrl", "fanLevel", "seatIndex", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -1078,11 +1205,31 @@
     },
     "/liveStreams/{streamId}/messages/{messageId}": {
       "schema": { "$ref": "#/entities/LiveStreamMessage" },
-      "description": "Real-time chat, heart, and gift events inside an active live stream room."
+      "description": "Real-time chat, heart, join, and gift events inside an active live stream room."
+    },
+    "/liveStreams/{streamId}/guests/{guestUid}": {
+      "schema": { "$ref": "#/entities/LiveGuest" },
+      "description": "Accepted multi-guest party participants and mic mute state inside an active Live."
+    },
+    "/liveStreams/{streamId}/joinRequests/{requesterUid}": {
+      "schema": { "$ref": "#/entities/LiveJoinRequest" },
+      "description": "Pending viewer requests to join the ViroParty multi-guest grid."
     },
     "/liveConfigs/{creatorUid}": {
       "schema": { "$ref": "#/entities/CreatorLiveConfig" },
       "description": "Saved Fan Club perks and Audience Favorites per creator."
+    },
+    "/users/{userId}/recharges/{rechargeId}": {
+      "schema": { "$ref": "#/entities/CoinRecharge" },
+      "description": "Verified VexPay coin recharge receipts per user."
+    },
+    "/liveBattles/{battleId}": {
+      "schema": { "$ref": "#/entities/LiveBattle" },
+      "description": "Real-time ViroArena PK battles between two creators."
+    },
+    "/liveBattles/{battleId}/gifts/{giftId}": {
+      "schema": { "$ref": "#/entities/LiveBattleGift" },
+      "description": "Gift events sent during a ViroArena PK battle."
     }
   }
 }

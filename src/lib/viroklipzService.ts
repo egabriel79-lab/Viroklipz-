@@ -11,6 +11,8 @@ import {
   type User,
 } from 'firebase/auth';
 import {
+  arrayRemove,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -80,11 +82,16 @@ import type {
   FanClubPerk,
   GuardianAuthorizationData,
   LiveAudience,
+  LiveBattleGiftEvent,
+  LiveBattleRecord,
+  LiveGuestRecord,
+  LiveJoinRequest,
   LiveQuality,
   LiveStreamMessage,
   LiveStreamRecord,
   LiveVisualEffect,
   PresenceStatus,
+  RechargePackage,
   ReportReason,
   ReportTargetType,
   StatusNote,
@@ -99,8 +106,11 @@ import {
   DEFAULT_FAN_PERKS,
   DEFAULT_FAN_POINTS_PER_COIN,
   DEFAULT_VIP_ALERT_CONFIG,
+  FULLSCREEN_GIFT_THRESHOLD_COINS,
   normalizeFanLevelThreshold,
+  RECHARGE_PACKAGES,
   resolveFanLevel,
+  WELCOME_BONUS_ROSES,
 } from './liveGifts';
 
 const actionTimestamps = new Map<string, number>();
@@ -245,10 +255,14 @@ function canUseRedirectFallback(): boolean {
   }
 }
 
-export async function signInWithGoogle(): Promise<UserProfile | null> {
+const GOOGLE_PENDING_SIGNUP_KEY = 'viroklipz_google_pending_signup';
+
+export async function signInWithGoogle(
+  overrides?: EnsureProfileOverrides,
+): Promise<UserProfile | null> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
-    return await ensureUserProfile(result.user);
+    return await ensureUserProfile(result.user, overrides);
   } catch (err) {
     const code = extractAuthErrorCode(err);
     const shouldRedirect =
@@ -257,6 +271,13 @@ export async function signInWithGoogle(): Promise<UserProfile | null> {
         code === 'auth/operation-not-supported-in-this-environment' ||
         code === 'auth/web-storage-unsupported');
     if (shouldRedirect) {
+      if (overrides && typeof sessionStorage !== 'undefined') {
+        try {
+          sessionStorage.setItem(GOOGLE_PENDING_SIGNUP_KEY, JSON.stringify(overrides));
+        } catch {
+          // Ignore storage errors
+        }
+      }
       await signInWithRedirect(auth, googleProvider);
       return null;
     }
@@ -268,7 +289,19 @@ export async function completeGoogleRedirectIfPending(): Promise<UserProfile | n
   try {
     const result = await getRedirectResult(auth);
     if (!result?.user) return null;
-    return await ensureUserProfile(result.user);
+    let storedOverrides: EnsureProfileOverrides | undefined;
+    if (typeof sessionStorage !== 'undefined') {
+      try {
+        const raw = sessionStorage.getItem(GOOGLE_PENDING_SIGNUP_KEY);
+        if (raw) {
+          storedOverrides = JSON.parse(raw) as EnsureProfileOverrides;
+          sessionStorage.removeItem(GOOGLE_PENDING_SIGNUP_KEY);
+        }
+      } catch {
+        storedOverrides = undefined;
+      }
+    }
+    return await ensureUserProfile(result.user, storedOverrides);
   } catch (err) {
     console.warn('Google redirect auth warning:', err);
     throw err;
@@ -384,10 +417,18 @@ export function mapAuthErrorMessage(err: unknown): string {
         : 'Este dominio no está autorizado en Firebase Console (Authentication > Settings > Authorized domains).';
     case 'auth/network-request-failed':
       return 'Error de red. Verifica tu conexión a internet e inténtalo nuevamente.';
+    case 'auth/popup-closed-by-user':
+      return 'Cerraste la ventana de Google antes de completar el acceso.';
+    case 'auth/popup-blocked':
+      return 'Tu navegador bloqueó la ventana emergente de Google. Permite ventanas emergentes e inténtalo de nuevo.';
+    case 'auth/cancelled-popup-request':
+      return 'Se canceló la solicitud anterior de Google. Inténtalo de nuevo.';
+    case 'auth/account-exists-with-different-credential':
+      return 'Ya existe una cuenta con ese correo usando otro método de acceso.';
     case 'auth/web-storage-unsupported':
       return 'Tu navegador bloquea las cookies o almacenamiento necesario para iniciar sesión. Desactiva el modo privado estricto o permite cookies.';
     case 'auth/internal-error':
-      return 'Error interno de Firebase Auth. Verifica que este dominio esté autorizado y que Correo electrónico/Contraseña esté activado en Firebase Console.';
+      return 'Error interno de Firebase Auth. Verifica que este dominio esté autorizado y los proveedores activados en Firebase Console.';
     default: {
       if (err instanceof Error && err.message.startsWith('{')) {
         try {
@@ -450,6 +491,9 @@ function buildFallbackProfile(
     avatarUrl: sanitizeAvatarUrl(user.photoURL),
     isPublic: true,
     followersCount: 0,
+    coins: 0,
+    freeRoses: 0,
+    welcomeRechargeClaimed: false,
     ...(typeof overrides?.age === 'number' ? { age: overrides.age } : {}),
     ...(typeof overrides?.isMinor === 'boolean' ? { isMinor: overrides.isMinor } : {}),
     ...(overrides?.guardianData ? { guardianData: overrides.guardianData } : {}),
@@ -542,6 +586,15 @@ async function ensureUserProfileInternal(
         typeof d.fanPoints === 'number' && Number.isFinite(d.fanPoints)
           ? Math.max(0, Math.floor(d.fanPoints))
           : 0,
+      coins:
+        typeof d.coins === 'number' && Number.isFinite(d.coins)
+          ? Math.max(0, Math.floor(d.coins))
+          : 0,
+      freeRoses:
+        typeof d.freeRoses === 'number' && Number.isFinite(d.freeRoses)
+          ? Math.max(0, Math.floor(d.freeRoses))
+          : 0,
+      welcomeRechargeClaimed: Boolean(d.welcomeRechargeClaimed ?? false),
       age: typeof d.age === 'number' ? d.age : undefined,
       isMinor: typeof d.isMinor === 'boolean' ? d.isMinor : undefined,
       guardianData: rawGuardian
@@ -2175,6 +2228,9 @@ export function subscribeActiveLiveStreams(
           guestStreamUrl: sanitizeMediaUrl(
             typeof data.guestStreamUrl === 'string' ? data.guestStreamUrl : '',
           ),
+          guests: Array.isArray(data.guests)
+            ? data.guests.filter((item): item is string => typeof item === 'string').slice(0, 10)
+            : [],
           audioPreset: (data.audioPreset || 'urban_beat') as AudioPreset,
           status: data.status === 'ended' ? 'ended' : 'live',
           viewerCount: Math.max(1, Number(data.viewerCount || 1)),
@@ -2281,6 +2337,7 @@ export async function startFirestoreLiveStream(
       ...(cleanGuestUid ? { guestUid: cleanGuestUid } : {}),
       ...(cleanGuestDisplayName ? { guestDisplayName: cleanGuestDisplayName } : {}),
       ...(cleanGuestStreamUrl ? { guestStreamUrl: cleanGuestStreamUrl } : {}),
+      guests: cleanGuestUid ? [cleanGuestUid] : [],
       fanPerks,
       audienceFavorites,
       fanClubName,
@@ -2440,8 +2497,14 @@ export function subscribeLiveStreamMessages(
       const items: LiveStreamMessage[] = snap.docs.map((d) => {
         const data = d.data();
         const rawKind = String(data.kind || 'chat');
-        const kind: 'chat' | 'like' | 'gift' =
-          rawKind === 'like' ? 'like' : rawKind === 'gift' ? 'gift' : 'chat';
+        const kind: 'chat' | 'like' | 'gift' | 'join' =
+          rawKind === 'like'
+            ? 'like'
+            : rawKind === 'gift'
+              ? 'gift'
+              : rawKind === 'join'
+                ? 'join'
+                : 'chat';
         return {
           id: String(data.id || d.id),
           streamId: String(data.streamId || streamId),
@@ -2456,6 +2519,7 @@ export function subscribeLiveStreamMessages(
           giftValue: typeof data.giftValue === 'number' ? data.giftValue : undefined,
           senderFanLevel:
             typeof data.senderFanLevel === 'number' ? data.senderFanLevel : undefined,
+          isTop1: typeof data.isTop1 === 'boolean' ? data.isTop1 : undefined,
           triggeredAction:
             typeof data.triggeredAction === 'string' ? data.triggeredAction : undefined,
           createdAtMs: toMillis(data.createdAt),
@@ -2474,12 +2538,13 @@ export async function sendLiveStreamMessage(
   streamId: string,
   profile: UserProfile,
   text: string,
-  kind: 'chat' | 'like' | 'gift' = 'chat',
+  kind: 'chat' | 'like' | 'gift' | 'join' = 'chat',
   giftMeta?: {
     giftId?: string;
     giftName: string;
     giftValue: number;
     triggeredAction?: string;
+    isTop1?: boolean;
   },
 ): Promise<void> {
   if (!streamId) return;
@@ -2492,9 +2557,11 @@ export async function sendLiveStreamMessage(
     text.trim().slice(0, 180) ||
     (kind === 'like'
       ? 'le dio un me gusta al LIVE'
-      : kind === 'gift'
-        ? `envió un regalo: ${giftMeta?.giftName || 'Viroklipz'}`
-        : '');
+      : kind === 'join'
+        ? `👋 ${profile.displayName || profile.username} se ha unido a la fiesta`
+        : kind === 'gift'
+          ? `envió un regalo: ${giftMeta?.giftName || 'Viroklipz'}`
+          : '');
   if (!cleanText) return;
   const senderFanLevel = resolveFanLevel(profile.fanLevel, profile.fanPoints);
 
@@ -2509,6 +2576,7 @@ export async function sendLiveStreamMessage(
       text: cleanText,
       kind,
       senderFanLevel,
+      ...(typeof giftMeta?.isTop1 === 'boolean' ? { isTop1: giftMeta.isTop1 } : {}),
       ...(giftMeta?.giftId ? { giftId: giftMeta.giftId.slice(0, 32) } : {}),
       ...(giftMeta?.giftName ? { giftName: giftMeta.giftName.slice(0, 40) } : {}),
       ...(typeof giftMeta?.giftValue === 'number'
@@ -2524,21 +2592,464 @@ export async function sendLiveStreamMessage(
   }
 }
 
+export async function requestToJoin(
+  liveId: string,
+  userId: string,
+  options?: { profile?: UserProfile; seatIndex?: number },
+): Promise<void> {
+  if (!liveId || !userId || !auth.currentUser || auth.currentUser.uid !== userId) {
+    throw new Error('Inicia sesión para solicitar entrar a ViroParty.');
+  }
+  const profile = options?.profile;
+  const seatIndex = Math.min(9, Math.max(0, Math.floor(options?.seatIndex ?? 0)));
+  const fanLevel = resolveFanLevel(profile?.fanLevel, profile?.fanPoints);
+  const path = `liveStreams/${liveId}/joinRequests/${userId}`;
+
+  try {
+    await setDoc(doc(db, 'liveStreams', liveId, 'joinRequests', userId), {
+      id: userId,
+      liveId,
+      userId,
+      username: sanitizeUsername(profile?.username || userId, userId),
+      displayName:
+        (profile?.displayName || profile?.username || 'Invitado').trim().slice(0, MAX_DISPLAY_NAME_LEN) ||
+        'Invitado',
+      avatarUrl: sanitizeAvatarUrl(profile?.avatarUrl),
+      fanLevel,
+      seatIndex,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export function subscribeLiveGuests(
+  streamId: string,
+  onData: (guests: LiveGuestRecord[]) => void,
+): Unsubscribe {
+  if (!streamId) return () => {};
+  const q = query(
+    collection(db, 'liveStreams', streamId, 'guests'),
+    where('streamId', '==', streamId),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: LiveGuestRecord[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          uid: String(data.uid || d.id),
+          streamId: String(data.streamId || streamId),
+          username: String(data.username || 'invitado'),
+          displayName: String(data.displayName || 'Invitado'),
+          avatarUrl: String(data.avatarUrl || ''),
+          fanLevel: Math.min(50, Math.max(1, Number(data.fanLevel || 1))),
+          seatIndex: Math.min(9, Math.max(0, Number(data.seatIndex || 0))),
+          muted: Boolean(data.muted),
+          isTop1: Boolean(data.isTop1),
+          joinedAtMs: toMillis(data.joinedAt),
+        };
+      });
+      items.sort((a, b) => a.seatIndex - b.seatIndex || a.joinedAtMs - b.joinedAtMs);
+      onData(items);
+    },
+    (err) => {
+      console.warn('Error leyendo invitados de ViroParty:', err);
+    },
+  );
+}
+
+export function subscribeLiveJoinRequests(
+  streamId: string,
+  onData: (requests: LiveJoinRequest[]) => void,
+): Unsubscribe {
+  if (!streamId || !auth.currentUser) return () => {};
+  const q = query(
+    collection(db, 'liveStreams', streamId, 'joinRequests'),
+    where('liveId', '==', streamId),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: LiveJoinRequest[] = snap.docs
+        .map((d) => {
+          const data = d.data();
+          const rawStatus = String(data.status || 'pending');
+          const status: 'pending' | 'accepted' | 'rejected' =
+            rawStatus === 'accepted'
+              ? 'accepted'
+              : rawStatus === 'rejected'
+                ? 'rejected'
+                : 'pending';
+          return {
+            id: String(data.id || d.id),
+            liveId: String(data.liveId || streamId),
+            userId: String(data.userId || d.id),
+            username: String(data.username || 'usuario'),
+            displayName: String(data.displayName || 'Invitado'),
+            avatarUrl: String(data.avatarUrl || ''),
+            fanLevel: Math.min(50, Math.max(1, Number(data.fanLevel || 1))),
+            seatIndex: Math.min(9, Math.max(0, Number(data.seatIndex || 0))),
+            status,
+            createdAtMs: toMillis(data.createdAt),
+          };
+        })
+        .filter((req) => req.status === 'pending');
+      items.sort((a, b) => a.createdAtMs - b.createdAtMs);
+      onData(items);
+    },
+    (err) => {
+      console.warn('Error leyendo cola de solicitudes ViroParty:', err);
+    },
+  );
+}
+
+export async function acceptLiveJoinRequest(
+  liveId: string,
+  req: LiveJoinRequest,
+  hostProfile: UserProfile,
+): Promise<void> {
+  if (!liveId || !req.userId) return;
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'liveStreams', liveId), {
+    guests: arrayUnion(req.userId),
+    updatedAt: serverTimestamp(),
+  });
+  batch.set(doc(db, 'liveStreams', liveId, 'guests', req.userId), {
+    uid: req.userId,
+    streamId: liveId,
+    username: sanitizeUsername(req.username, req.userId),
+    displayName: req.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Invitado',
+    avatarUrl: sanitizeAvatarUrl(req.avatarUrl),
+    fanLevel: Math.min(50, Math.max(1, Math.floor(req.fanLevel || 1))),
+    seatIndex: Math.min(9, Math.max(0, Math.floor(req.seatIndex || 0))),
+    muted: false,
+    isTop1: false,
+    joinedAt: serverTimestamp(),
+  });
+  batch.delete(doc(db, 'liveStreams', liveId, 'joinRequests', req.userId));
+
+  try {
+    await batch.commit();
+    await sendLiveStreamMessage(
+      liveId,
+      hostProfile,
+      `👋 ${req.displayName} se ha unido a la fiesta`,
+      'join',
+    ).catch(() => {});
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `liveStreams/${liveId}/guests/${req.userId}`);
+  }
+}
+
+export async function rejectLiveJoinRequest(
+  liveId: string,
+  requesterUid: string,
+): Promise<void> {
+  if (!liveId || !requesterUid) return;
+  try {
+    await deleteDoc(doc(db, 'liveStreams', liveId, 'joinRequests', requesterUid));
+  } catch (err) {
+    console.warn('No se pudo rechazar la solicitud de ViroParty:', err);
+  }
+}
+
+export async function toggleLiveGuestMute(
+  liveId: string,
+  guestUid: string,
+  muted: boolean,
+): Promise<void> {
+  if (!liveId || !guestUid) return;
+  try {
+    await updateDoc(doc(db, 'liveStreams', liveId, 'guests', guestUid), {
+      muted,
+    });
+  } catch (err) {
+    console.warn('No se pudo actualizar el audio del invitado:', err);
+  }
+}
+
+export async function removeLiveGuest(liveId: string, guestUid: string): Promise<void> {
+  if (!liveId || !guestUid) return;
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'liveStreams', liveId), {
+    guests: arrayRemove(guestUid),
+    updatedAt: serverTimestamp(),
+  });
+  batch.delete(doc(db, 'liveStreams', liveId, 'guests', guestUid));
+  try {
+    await batch.commit();
+  } catch (err) {
+    console.warn('No se pudo retirar al invitado de ViroParty:', err);
+  }
+}
+
+export async function sendLivePartyJoinAnnouncement(
+  streamId: string,
+  profile: UserProfile,
+): Promise<void> {
+  if (!streamId || !auth.currentUser) return;
+  const display = profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || profile.username;
+  await sendLiveStreamMessage(
+    streamId,
+    profile,
+    `👋 ${display} se ha unido a la fiesta`,
+    'join',
+  ).catch(() => {});
+}
+
+export class InsufficientCoinsError extends Error {
+  requiredCoins: number;
+  currentCoins: number;
+  giftName: string;
+  isFirstWelcomeEligible: boolean;
+
+  constructor(
+    requiredCoins: number,
+    currentCoins: number,
+    giftName: string,
+    isFirstWelcomeEligible: boolean,
+  ) {
+    super(
+      `Necesitas ${requiredCoins} monedas para enviar ${giftName} (saldo actual: ${currentCoins}).`,
+    );
+    this.name = 'InsufficientCoinsError';
+    this.requiredCoins = requiredCoins;
+    this.currentCoins = currentCoins;
+    this.giftName = giftName;
+    this.isFirstWelcomeEligible = isFirstWelcomeEligible;
+  }
+}
+
+export interface WalletSnapshot {
+  coins: number;
+  freeRoses: number;
+  welcomeRechargeClaimed: boolean;
+}
+
+export function subscribeUserWallet(
+  uid: string,
+  onData: (wallet: WalletSnapshot) => void,
+): Unsubscribe {
+  if (!uid) return () => {};
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      if (!snap.exists()) return;
+      const d = snap.data();
+      onData({
+        coins:
+          typeof d.coins === 'number' && Number.isFinite(d.coins)
+            ? Math.max(0, Math.floor(d.coins))
+            : 0,
+        freeRoses:
+          typeof d.freeRoses === 'number' && Number.isFinite(d.freeRoses)
+            ? Math.max(0, Math.floor(d.freeRoses))
+            : 0,
+        welcomeRechargeClaimed: Boolean(d.welcomeRechargeClaimed ?? false),
+      });
+    },
+    (err) => {
+      console.warn('No se pudo suscribir al saldo de monedas:', err);
+    },
+  );
+}
+
+export async function rechargeCoinsViaVexPay(
+  uid: string,
+  pkg: RechargePackage,
+  isFirstRecharge: boolean,
+): Promise<{
+  mode: 'sandbox' | 'external';
+  checkoutUrl?: string;
+  transactionId: string;
+  coinsCredited: number;
+  bonusRoses: number;
+}> {
+  if (!uid || !auth.currentUser || auth.currentUser.uid !== uid) {
+    throw new Error('Inicia sesión para recargar monedas con VexPay.');
+  }
+
+  const validPkg = RECHARGE_PACKAGES.find((p) => p.id === pkg.id);
+  if (!validPkg) {
+    throw new Error('Paquete de recarga no válido.');
+  }
+
+  const idToken = await auth.currentUser.getIdToken();
+  const createRes = await fetch('/api/vexpay/create-checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      packageId: validPkg.id,
+      isFirstRecharge,
+    }),
+  });
+
+  const createData = (await createRes.json().catch(() => ({}))) as {
+    error?: string;
+    mode?: 'sandbox' | 'external';
+    transactionId?: string;
+    signature?: string;
+    checkoutUrl?: string;
+    bonusRoses?: number;
+  };
+
+  if (!createRes.ok || !createData.transactionId || !createData.signature) {
+    throw new Error(createData.error || 'No se pudo iniciar el checkout de VexPay.');
+  }
+
+  if (createData.mode === 'external' && createData.checkoutUrl) {
+    return {
+      mode: 'external',
+      checkoutUrl: createData.checkoutUrl,
+      transactionId: createData.transactionId,
+      coinsCredited: validPkg.totalCoins,
+      bonusRoses: isFirstRecharge ? WELCOME_BONUS_ROSES : 0,
+    };
+  }
+
+  const confirmRes = await fetch('/api/vexpay/confirm-checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      transactionId: createData.transactionId,
+      packageId: validPkg.id,
+      signature: createData.signature,
+      isFirstRecharge,
+    }),
+  });
+
+  const confirmData = (await confirmRes.json().catch(() => ({}))) as {
+    error?: string;
+    verified?: boolean;
+    transactionId?: string;
+    coinsCredited?: number;
+    bonusRoses?: number;
+    priceUsd?: number;
+  };
+
+  if (!confirmRes.ok || !confirmData.verified) {
+    throw new Error(confirmData.error || 'VexPay no pudo confirmar el pago.');
+  }
+
+  const coinsToCredit = Math.min(1635, Math.max(1, Number(confirmData.coinsCredited || validPkg.totalCoins)));
+  const rosesToCredit = isFirstRecharge
+    ? Math.min(WELCOME_BONUS_ROSES, Math.max(0, Number(confirmData.bonusRoses ?? WELCOME_BONUS_ROSES)))
+    : 0;
+  const txId = String(confirmData.transactionId || createData.transactionId);
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'users', uid, 'recharges', txId), {
+    id: txId,
+    userId: uid,
+    packageId: validPkg.id,
+    coinsCredited: coinsToCredit,
+    bonusRoses: rosesToCredit,
+    priceUsd: validPkg.priceUsd,
+    provider: 'VexPay',
+    createdAt: serverTimestamp(),
+  });
+  batch.update(doc(db, 'users', uid), {
+    coins: increment(coinsToCredit),
+    ...(rosesToCredit > 0 ? { freeRoses: increment(rosesToCredit) } : {}),
+    welcomeRechargeClaimed: true,
+    updatedAt: serverTimestamp(),
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${uid}/recharges/${txId}`);
+  }
+
+  return {
+    mode: 'sandbox',
+    transactionId: txId,
+    coinsCredited: coinsToCredit,
+    bonusRoses: rosesToCredit,
+  };
+}
+
+async function chargeGiftFromUserWallet(
+  uid: string,
+  gift: { id?: string; name: string; value: number },
+): Promise<{ usedFreeRose: boolean; remainingCoins: number; remainingFreeRoses: number }> {
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+  const data = snap.exists() ? snap.data() : {};
+  const currentCoins =
+    typeof data.coins === 'number' && Number.isFinite(data.coins)
+      ? Math.max(0, Math.floor(data.coins))
+      : 0;
+  const currentFreeRoses =
+    typeof data.freeRoses === 'number' && Number.isFinite(data.freeRoses)
+      ? Math.max(0, Math.floor(data.freeRoses))
+      : 0;
+  const welcomeClaimed = Boolean(data.welcomeRechargeClaimed ?? false);
+
+  const isRose =
+    (gift.id || '').toLowerCase() === 'rosa' || gift.name.trim().toLowerCase() === 'rosa';
+
+  if (isRose && currentFreeRoses > 0) {
+    await updateDoc(userRef, {
+      freeRoses: currentFreeRoses - 1,
+      updatedAt: serverTimestamp(),
+    });
+    return {
+      usedFreeRose: true,
+      remainingCoins: currentCoins,
+      remainingFreeRoses: currentFreeRoses - 1,
+    };
+  }
+
+  if (currentCoins < gift.value) {
+    throw new InsufficientCoinsError(gift.value, currentCoins, gift.name, !welcomeClaimed);
+  }
+
+  const nextCoins = currentCoins - gift.value;
+  await updateDoc(userRef, {
+    coins: nextCoins,
+    updatedAt: serverTimestamp(),
+  });
+  return {
+    usedFreeRose: false,
+    remainingCoins: nextCoins,
+    remainingFreeRoses: currentFreeRoses,
+  };
+}
+
 export async function sendLiveStreamGift(
   streamId: string,
   profile: UserProfile,
   gift: { id?: string; name: string; value: number },
-): Promise<{ matchedFavorite: AudienceFavorite | null; newFanLevel: number; vipAlertEnabled: boolean }> {
+): Promise<{
+  matchedFavorite: AudienceFavorite | null;
+  newFanLevel: number;
+  vipAlertEnabled: boolean;
+  usedFreeRose: boolean;
+}> {
+  assertCooldown('liveGift', 900, 'Espera un segundo antes de enviar otro regalo.');
+
+  const charge = await chargeGiftFromUserWallet(profile.uid, gift);
+
   if (!streamId) {
     return {
       matchedFavorite: null,
       newFanLevel: resolveFanLevel(profile.fanLevel, profile.fanPoints),
       vipAlertEnabled: true,
+      usedFreeRose: charge.usedFreeRose,
     };
   }
-  assertCooldown('liveGift', 900, 'Espera un segundo antes de enviar otro regalo.');
 
-  // PARTE 3.1: Verify in Firestore whether the gift is linked to an Audience Favorite on this Live
+  // Verify in Firestore whether the gift is linked to an Audience Favorite on this Live
   let matchedFavorite: AudienceFavorite | null = null;
   let pointsPerCoin = DEFAULT_FAN_POINTS_PER_COIN;
   let vipAlertEnabled = true;
@@ -2589,14 +3100,23 @@ export async function sendLiveStreamGift(
     fanLevel: nextFanLevel,
   };
 
+  const senderDisplayName =
+    profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || profile.username || 'Fan';
+  const isGiantGift = gift.value > FULLSCREEN_GIFT_THRESHOLD_COINS;
+  const chatText = isGiantGift
+    ? `¡${senderDisplayName} acaba de enviar un ${gift.name} gigante!`
+    : matchedFavorite
+      ? `envió ${gift.name} · Acción: ${matchedFavorite.action}`
+      : charge.usedFreeRose
+        ? `envió ${gift.name} de bienvenida`
+        : `envió ${gift.name} (+${gift.value} monedas)`;
+
   await Promise.all([
     incrementLiveStreamGift(streamId),
     sendLiveStreamMessage(
       streamId,
       updatedProfile,
-      matchedFavorite
-        ? `envió ${gift.name} · Acción: ${matchedFavorite.action}`
-        : `envió ${gift.name} (+${gift.value} monedas)`,
+      chatText,
       'gift',
       {
         giftId: gift.id,
@@ -2614,7 +3134,256 @@ export async function sendLiveStreamGift(
     }),
   ]);
 
-  return { matchedFavorite: vipAlertEnabled ? matchedFavorite : null, newFanLevel: nextFanLevel, vipAlertEnabled };
+  return {
+    matchedFavorite: vipAlertEnabled ? matchedFavorite : null,
+    newFanLevel: nextFanLevel,
+    vipAlertEnabled,
+    usedFreeRose: charge.usedFreeRose,
+  };
 }
 
+function mapLiveBattleDoc(id: string, data: Record<string, unknown>): LiveBattleRecord {
+  return {
+    id: String(data.id || id),
+    hostStreamId: typeof data.hostStreamId === 'string' ? data.hostStreamId : undefined,
+    status: data.status === 'ended' ? 'ended' : 'active',
+    durationSec: Math.max(60, Number(data.durationSec || 300)),
+    endsAtMs: Number(data.endsAtMs || Date.now() + 300_000),
+    creator1Uid: String(data.creator1Uid || ''),
+    creator1Username: String(data.creator1Username || 'creador1'),
+    creator1DisplayName: String(data.creator1DisplayName || 'Creador 1'),
+    creator1AvatarUrl: String(data.creator1AvatarUrl || ''),
+    creator1PreviewUrl: String(data.creator1PreviewUrl || ''),
+    creator1StreamUrl: typeof data.creator1StreamUrl === 'string' ? data.creator1StreamUrl : undefined,
+    creator1Points: Math.max(0, Number(data.creator1Points || 0)),
+    creator1WinStreak: Math.max(0, Number(data.creator1WinStreak || 1)),
+    creator2Uid: String(data.creator2Uid || ''),
+    creator2Username: String(data.creator2Username || 'creador2'),
+    creator2DisplayName: String(data.creator2DisplayName || 'Creador 2'),
+    creator2AvatarUrl: String(data.creator2AvatarUrl || ''),
+    creator2PreviewUrl: String(data.creator2PreviewUrl || ''),
+    creator2StreamUrl: typeof data.creator2StreamUrl === 'string' ? data.creator2StreamUrl : undefined,
+    creator2Points: Math.max(0, Number(data.creator2Points || 0)),
+    creator2WinStreak: Math.max(0, Number(data.creator2WinStreak || 1)),
+    lastGiftSender: typeof data.lastGiftSender === 'string' ? data.lastGiftSender : undefined,
+    lastGiftName: typeof data.lastGiftName === 'string' ? data.lastGiftName : undefined,
+    lastGiftTarget:
+      data.lastGiftTarget === 'creator1' || data.lastGiftTarget === 'creator2'
+        ? data.lastGiftTarget
+        : undefined,
+    lastGiftPoints: typeof data.lastGiftPoints === 'number' ? data.lastGiftPoints : undefined,
+    startedAtMs: toMillis(data.startedAt),
+    updatedAtMs: toMillis(data.updatedAt),
+  };
+}
+
+export function subscribeLiveBattle(
+  battleId: string,
+  onData: (battle: LiveBattleRecord | null) => void,
+): Unsubscribe {
+  if (!battleId) return () => {};
+  return onSnapshot(
+    doc(db, 'liveBattles', battleId),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(mapLiveBattleDoc(snap.id, snap.data() as Record<string, unknown>));
+    },
+    (err) => {
+      console.warn('Error leyendo batalla ViroArena:', err);
+    },
+  );
+}
+
+export function subscribeLiveBattleGifts(
+  battleId: string,
+  onData: (events: LiveBattleGiftEvent[]) => void,
+): Unsubscribe {
+  if (!battleId) return () => {};
+  const q = query(
+    collection(db, 'liveBattles', battleId, 'gifts'),
+    where('battleId', '==', battleId),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items: LiveBattleGiftEvent[] = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          id: String(data.id || d.id),
+          battleId: String(data.battleId || battleId),
+          targetSlot: data.targetSlot === 'creator2' ? 'creator2' : 'creator1',
+          senderUid: String(data.senderUid || ''),
+          senderUsername: String(data.senderUsername || 'fan'),
+          senderDisplayName: String(data.senderDisplayName || 'Fan'),
+          senderAvatarUrl: String(data.senderAvatarUrl || ''),
+          giftId: String(data.giftId || ''),
+          giftName: String(data.giftName || 'Regalo'),
+          coins: Number(data.coins || 0),
+          points: Number(data.points || 0),
+          createdAtMs: toMillis(data.createdAt),
+        };
+      });
+      items.sort((a, b) => a.createdAtMs - b.createdAtMs);
+      onData(items.slice(-40));
+    },
+    (err) => {
+      console.warn('Error leyendo regalos de ViroArena:', err);
+    },
+  );
+}
+
+export async function startFirestoreLiveBattle(input: {
+  hostStreamId?: string;
+  durationSec?: number;
+  creator1: {
+    uid: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+    previewUrl: string;
+    streamUrl?: string;
+  };
+  creator2: {
+    uid: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+    previewUrl: string;
+    streamUrl?: string;
+  };
+}): Promise<string> {
+  const battleId = createSafeId('pk');
+  const durationSec = Math.min(3600, Math.max(60, Math.round(input.durationSec || 300)));
+  const endsAtMs = Date.now() + durationSec * 1000;
+  const path = `liveBattles/${battleId}`;
+
+  try {
+    await setDoc(doc(db, 'liveBattles', battleId), {
+      id: battleId,
+      ...(input.hostStreamId ? { hostStreamId: input.hostStreamId.slice(0, 128) } : {}),
+      status: 'active',
+      durationSec,
+      endsAtMs,
+      creator1Uid: input.creator1.uid,
+      creator1Username: sanitizeUsername(input.creator1.username, input.creator1.uid),
+      creator1DisplayName: input.creator1.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador 1',
+      creator1AvatarUrl: sanitizeAvatarUrl(input.creator1.avatarUrl),
+      creator1PreviewUrl: sanitizeLivePreviewUrl(input.creator1.previewUrl),
+      ...(input.creator1.streamUrl ? { creator1StreamUrl: sanitizeMediaUrl(input.creator1.streamUrl) } : {}),
+      creator1Points: 0,
+      creator1WinStreak: 1,
+      creator2Uid: input.creator2.uid,
+      creator2Username: sanitizeUsername(input.creator2.username, input.creator2.uid),
+      creator2DisplayName: input.creator2.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador 2',
+      creator2AvatarUrl: sanitizeAvatarUrl(input.creator2.avatarUrl),
+      creator2PreviewUrl: sanitizeLivePreviewUrl(input.creator2.previewUrl),
+      ...(input.creator2.streamUrl ? { creator2StreamUrl: sanitizeMediaUrl(input.creator2.streamUrl) } : {}),
+      creator2Points: 0,
+      creator2WinStreak: 1,
+      startedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+
+  return battleId;
+}
+
+export async function sendBattleGift(
+  battleId: string,
+  targetSlot: 'creator1' | 'creator2',
+  sender: UserProfile,
+  gift: { id: string; name: string; coins: number },
+): Promise<{ pointsAdded: number; usedFreeRose: boolean }> {
+  assertCooldown('battleGift', 600, 'Espera un instante antes de enviar otro apoyo.');
+
+  const charge = await chargeGiftFromUserWallet(sender.uid, {
+    id: gift.id,
+    name: gift.name,
+    value: gift.coins,
+  });
+
+  const pointsAdded = Math.min(100000, Math.max(1, gift.coins));
+  const eventId = createSafeId('pk_gift');
+  const senderDisplay = sender.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Fan';
+
+  if (battleId && !battleId.startsWith('local-')) {
+    const battleRef = doc(db, 'liveBattles', battleId);
+    const giftRef = doc(db, 'liveBattles', battleId, 'gifts', eventId);
+    const batch = writeBatch(db);
+    batch.update(battleRef, {
+      ...(targetSlot === 'creator1'
+        ? { creator1Points: increment(pointsAdded) }
+        : { creator2Points: increment(pointsAdded) }),
+      lastGiftSender: senderDisplay,
+      lastGiftName: gift.name.slice(0, 40),
+      lastGiftTarget: targetSlot,
+      lastGiftPoints: pointsAdded,
+      updatedAt: serverTimestamp(),
+    });
+    batch.set(giftRef, {
+      id: eventId,
+      battleId,
+      targetSlot,
+      senderUid: sender.uid,
+      senderUsername: sanitizeUsername(sender.username, sender.uid),
+      senderDisplayName: senderDisplay,
+      senderAvatarUrl: sanitizeAvatarUrl(sender.avatarUrl),
+      giftId: gift.id.slice(0, 32),
+      giftName: gift.name.slice(0, 40),
+      coins: gift.coins,
+      points: pointsAdded,
+      createdAt: serverTimestamp(),
+    });
+    try {
+      await batch.commit();
+    } catch (err) {
+      console.warn('Error sincronizando batalla ViroArena:', err);
+    }
+  }
+
+  return { pointsAdded, usedFreeRose: charge.usedFreeRose };
+}
+
+export async function rematchFirestoreLiveBattle(
+  battleId: string,
+  winnerSlot: 'creator1' | 'creator2' | 'draw',
+  currentStreaks: { creator1WinStreak: number; creator2WinStreak: number },
+  durationSec = 300,
+): Promise<void> {
+  if (!battleId || battleId.startsWith('local-')) return;
+  const nextStreak1 =
+    winnerSlot === 'creator1' ? Math.min(1000, currentStreaks.creator1WinStreak + 1) : 1;
+  const nextStreak2 =
+    winnerSlot === 'creator2' ? Math.min(1000, currentStreaks.creator2WinStreak + 1) : 1;
+  try {
+    await updateDoc(doc(db, 'liveBattles', battleId), {
+      status: 'active',
+      endsAtMs: Date.now() + durationSec * 1000,
+      creator1Points: 0,
+      creator2Points: 0,
+      creator1WinStreak: nextStreak1,
+      creator2WinStreak: nextStreak2,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo reiniciar la revancha PK:', err);
+  }
+}
+
+export async function endFirestoreLiveBattle(battleId: string): Promise<void> {
+  if (!battleId || battleId.startsWith('local-')) return;
+  try {
+    await updateDoc(doc(db, 'liveBattles', battleId), {
+      status: 'ended',
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    console.warn('No se pudo finalizar la batalla PK:', err);
+  }
+}
 

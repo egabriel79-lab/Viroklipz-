@@ -25,7 +25,7 @@ class AdminUserModel {
   final int followersCount;
   final int fanLevel;
   final bool isAdmin;
-  final bool banned;
+  final bool isBanned;
   final bool isPublic;
   final DateTime createdAt;
 
@@ -40,7 +40,7 @@ class AdminUserModel {
     required this.followersCount,
     required this.fanLevel,
     required this.isAdmin,
-    required this.banned,
+    required this.isBanned,
     required this.isPublic,
     required this.createdAt,
   });
@@ -49,20 +49,21 @@ class AdminUserModel {
     final data = doc.data() ?? <String, dynamic>{};
     final username = (data['username'] ?? 'creador').toString();
     final rawEmail = (data['email'] ?? '').toString().trim();
+    final rawCountry = (data['country'] ?? '').toString().trim();
+    final suspended = data['isBanned'] == true || data['banned'] == true;
+
     return AdminUserModel(
       uid: (data['uid'] ?? doc.id).toString(),
       username: username,
       displayName: (data['displayName'] ?? username).toString(),
       email: rawEmail.isNotEmpty ? rawEmail : '$username@viroklipz.app',
       avatarUrl: (data['avatarUrl'] ?? '').toString(),
-      country: (data['country'] ?? 'Sin especificar').toString().trim().isNotEmpty
-          ? (data['country'] ?? '').toString().trim()
-          : 'Sin especificar',
+      country: rawCountry.isNotEmpty ? rawCountry : 'Sin especificar',
       coins: _parseInt(data['coins'], 0),
       followersCount: _parseInt(data['followersCount'], 0),
       fanLevel: _parseInt(data['fanLevel'], 1),
       isAdmin: data['isAdmin'] == true,
-      banned: data['banned'] == true,
+      isBanned: suspended,
       isPublic: data['isPublic'] != false,
       createdAt: _parseTimestamp(data['createdAt']),
     );
@@ -140,7 +141,7 @@ class AdminReportModel {
   });
 
   String get effectiveVideoId =>
-      videoId.isNotEmpty ? videoId : (targetType == 'clip' ? targetId : '');
+      videoId.isNotEmpty ? videoId : (targetId.isNotEmpty ? targetId : id);
 
   factory AdminReportModel.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? <String, dynamic>{};

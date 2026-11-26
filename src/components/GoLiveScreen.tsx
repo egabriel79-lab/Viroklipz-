@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BellRing,
   Camera,
@@ -16,12 +16,15 @@ import {
   Sparkles,
   Square,
   Star,
+  Swords,
   UserPlus,
   Users,
   Video,
   VideoOff,
   X,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import { FEATURED_CREATORS } from '../data/starterClips';
 import { audioEngine } from '../lib/audioEngine';
 import { auth } from '../lib/firebase';
 import {
@@ -37,6 +40,7 @@ import {
   endFirestoreLiveStream,
   startFirestoreLiveStream,
   subscribeCreatorLiveConfig,
+  subscribeLiveJoinRequests,
   subscribeLiveStreamMessages,
   updateFirestoreLiveGuest,
 } from '../lib/viroklipzService';
@@ -53,10 +57,13 @@ import type {
 } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
+import { LiveBattleScreen } from './LiveBattleScreen';
 import {
   LiveClubConfiguratorModal,
   type LiveClubConfigTab,
 } from './LiveClubConfiguratorModal';
+import { MultiGuestLobbyScreen } from './MultiGuestLobbyScreen';
+import { ViroArenaCountdownBanner } from './ViroArenaCountdownBanner';
 
 interface GoLiveScreenProps {
   currentUser: UserProfile;
@@ -175,6 +182,10 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
     DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
   );
   const [clubConfigTab, setClubConfigTab] = useState<LiveClubConfigTab | null>(null);
+  const [isBattleOpen, setIsBattleOpen] = useState(false);
+  const [isPartyLobbyOpen, setIsPartyLobbyOpen] = useState(false);
+  const [pendingPartyRequestsCount, setPendingPartyRequestsCount] = useState(0);
+  const [partyJoinToast, setPartyJoinToast] = useState<string | null>(null);
 
   // PARTE 3: VIP Notification banner on Host Studio
   const [vipAlert, setVipAlert] = useState<{
@@ -191,6 +202,8 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   const liveTimerRef = useRef<number | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const seenVipMsgIdsRef = useRef<Set<string>>(new Set());
+  const seenJoinMsgIdsRef = useRef<Set<string>>(new Set());
+  const joinToastTimerRef = useRef<number | null>(null);
   const vipTimerRef = useRef<number | null>(null);
   const vipConfigRef = useRef({
     vipAlertEnabled: DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
@@ -318,14 +331,24 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
     };
   }, [facingMode, quality, startPreview, stopBroadcastResources, stopMediaStream]);
 
+  const triggerPartyJoinToast = useCallback((message: string) => {
+    setPartyJoinToast(message);
+    if (joinToastTimerRef.current) window.clearTimeout(joinToastTimerRef.current);
+    joinToastTimerRef.current = window.setTimeout(() => {
+      setPartyJoinToast((curr) => (curr === message ? null : curr));
+    }, 3200);
+  }, []);
+
   useEffect(() => {
     if (!isLive || !activeStreamId) {
       setLiveMessages([]);
+      setPendingPartyRequestsCount(0);
       seenVipMsgIdsRef.current.clear();
+      seenJoinMsgIdsRef.current.clear();
       setVipAlert(null);
       return;
     }
-    const unsub = subscribeLiveStreamMessages(activeStreamId, (msgs) => {
+    const unsubMessages = subscribeLiveStreamMessages(activeStreamId, (msgs) => {
       setLiveMessages(msgs);
       const latestVip = [...msgs]
         .reverse()
@@ -348,9 +371,31 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
           cfg.vipAlertDurationSec * 1000,
         );
       }
+
+      const latestJoin = [...msgs]
+        .reverse()
+        .find((m) => m.kind === 'join' && !seenJoinMsgIdsRef.current.has(m.id));
+      if (latestJoin) {
+        seenJoinMsgIdsRef.current.add(latestJoin.id);
+        const isFreshJoin =
+          !latestJoin.createdAtMs || Date.now() - latestJoin.createdAtMs < 12_000;
+        if (isFreshJoin) {
+          triggerPartyJoinToast(
+            latestJoin.text || `👋 ${latestJoin.authorDisplayName} se ha unido a la fiesta`,
+          );
+        }
+      }
     });
-    return () => unsub();
-  }, [isLive, activeStreamId]);
+
+    const unsubRequests = subscribeLiveJoinRequests(activeStreamId, (reqs) => {
+      setPendingPartyRequestsCount(reqs.length);
+    });
+
+    return () => {
+      unsubMessages();
+      unsubRequests();
+    };
+  }, [isLive, activeStreamId, triggerPartyJoinToast]);
 
   useEffect(() => {
     if (!isRehearsing) return;
@@ -663,6 +708,25 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   const activeVipStylePreset =
     VIP_ALERT_STYLES.find((s) => s.id === vipAlertStyle) || VIP_ALERT_STYLES[0];
 
+  const top1ChatUid = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const m of liveMessages) {
+      if (m.isTop1) return m.authorId;
+      if (m.kind === 'gift') {
+        totals.set(m.authorId, (totals.get(m.authorId) || 0) + (m.giftValue || 10));
+      }
+    }
+    let bestUid: string | null = null;
+    let bestScore = 0;
+    for (const [uid, score] of totals.entries()) {
+      if (score > bestScore) {
+        bestScore = score;
+        bestUid = uid;
+      }
+    }
+    return bestUid;
+  }, [liveMessages]);
+
   return (
     <div className="fixed inset-0 z-50 bg-[#090B12] flex flex-col overflow-hidden text-white">
       {/* Live Stage (Full screen or Split-Screen when Multiplayer is active) */}
@@ -756,53 +820,61 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
           className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-[#090B12] via-[#090B12]/70 to-transparent"
         />
 
-        {/* Top Bar */}
-        <div className="absolute top-0 inset-x-0 z-20 px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              void stopBroadcastResources();
-              stopMediaStream();
-              onBack();
-            }}
-            className="min-h-[38px] px-3.5 rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 text-xs font-semibold text-white cursor-pointer"
-          >
-            Volver
-          </button>
+        {/* Top Bar + ViroArena Official Banner */}
+        <div className="absolute top-0 inset-x-0 z-20 px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void stopBroadcastResources();
+                stopMediaStream();
+                onBack();
+              }}
+              className="min-h-[38px] px-3.5 rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 text-xs font-semibold text-white cursor-pointer"
+            >
+              Volver
+            </button>
 
-          {isLive ? (
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#00B4D8]/85 via-[#6C5CE7] to-[#E84393] text-white text-xs font-bold tracking-wide shadow-[0_0_20px_rgba(232,67,147,0.45)]">
-              <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-pulse" />
-              <span>EN VIVO</span>
-              <span className="font-mono tabular-nums">{formatLiveDuration(liveSeconds)}</span>
-            </div>
-          ) : isRehearsing ? (
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#00B4D8]/20 backdrop-blur-md border border-[#00B4D8]/60 text-[#9BE8FA] text-xs font-bold">
-              <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-ping" />
-              <span>PRÁCTICA PRIVADA</span>
-              <span className="font-mono tabular-nums">{formatLiveDuration(rehearsalLeftSec)}</span>
-            </div>
-          ) : (
-            <div className="px-3 py-1.5 rounded-xl bg-[#0F1220]/75 backdrop-blur-md border border-[#00B4D8]/35 text-xs font-semibold text-white flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#00B4D8]" />
-              <span>Studio</span>
-              <FanLevelBadge level={creatorFanLevel} compact />
-              <span className="text-[10px] text-[#00B4D8] font-bold">{quality}</span>
-            </div>
-          )}
+            {isLive ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#00B4D8]/85 via-[#6C5CE7] to-[#E84393] text-white text-xs font-bold tracking-wide shadow-[0_0_20px_rgba(232,67,147,0.45)]">
+                <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-pulse" />
+                <span>EN VIVO</span>
+                <span className="font-mono tabular-nums">{formatLiveDuration(liveSeconds)}</span>
+              </div>
+            ) : isRehearsing ? (
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#00B4D8]/20 backdrop-blur-md border border-[#00B4D8]/60 text-[#9BE8FA] text-xs font-bold">
+                <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-ping" />
+                <span>PRÁCTICA PRIVADA</span>
+                <span className="font-mono tabular-nums">{formatLiveDuration(rehearsalLeftSec)}</span>
+              </div>
+            ) : (
+              <div className="px-3 py-1.5 rounded-xl bg-[#0F1220]/75 backdrop-blur-md border border-[#00B4D8]/35 text-xs font-semibold text-white flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#00B4D8]" />
+                <span>Studio</span>
+                <FanLevelBadge level={creatorFanLevel} compact />
+                <span className="text-[10px] text-[#00B4D8] font-bold">{quality}</span>
+              </div>
+            )}
 
-          <button
-            type="button"
-            onClick={() => {
-              void stopBroadcastResources();
-              stopMediaStream();
-              onClose();
-            }}
-            aria-label="Cerrar Live"
-            className="min-h-[38px] min-w-[38px] rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 flex items-center justify-center text-white cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                void stopBroadcastResources();
+                stopMediaStream();
+                onClose();
+              }}
+              aria-label="Cerrar Live"
+              className="min-h-[38px] min-w-[38px] rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 flex items-center justify-center text-white cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <ViroArenaCountdownBanner
+            initialSeconds={300}
+            onOpenBattle={() => setIsBattleOpen(true)}
+            compact
+          />
         </div>
 
         {/* PARTE 3: Host-Side Floating VIP Notification Banner */}
@@ -841,8 +913,8 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
           </div>
         )}
 
-        {/* PARTE 1: Floating Viroklipz Right Rail (Girar cámara, Efectos, Ajustes, Multijugador, Mic, Cam) */}
-        <div className="absolute right-3.5 top-24 z-20 flex flex-col gap-2.5">
+        {/* PARTE 1: Floating Viroklipz Right Rail (Girar cámara, Efectos, Ajustes, ViroParty, Multijugador, Mic, Cam) */}
+        <div className="absolute right-3.5 top-32 z-20 flex flex-col gap-2">
           <button
             type="button"
             disabled={isLive}
@@ -908,8 +980,25 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
 
           <button
             type="button"
+            onClick={() => setIsPartyLobbyOpen(true)}
+            aria-label="Abrir Lobby Multijugador ViroParty"
+            className="relative flex flex-col items-center gap-1 cursor-pointer group"
+          >
+            <span className="w-11 h-11 rounded-2xl bg-[#101424]/80 group-hover:bg-[#6C5CE7]/45 backdrop-blur-xl border border-[#00B4D8]/50 flex items-center justify-center text-[#00B4D8] transition-colors shadow-[0_0_16px_rgba(0,180,216,0.3)]">
+              <Users className="w-4 h-4" />
+            </span>
+            {pendingPartyRequestsCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E84393] text-white text-[10px] font-black flex items-center justify-center shadow-[0_0_10px_rgba(232,67,147,0.75)]">
+                {pendingPartyRequestsCount}
+              </span>
+            )}
+            <span className="text-[10px] font-semibold text-white/90 drop-shadow">ViroParty</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => void handleToggleMultiplayer()}
-            aria-label="Modo Multijugador"
+            aria-label="Modo Dúo Dividido"
             className="flex flex-col items-center gap-1 cursor-pointer group"
           >
             <span
@@ -919,10 +1008,24 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
                   : 'bg-[#101424]/75 group-hover:bg-[#00B4D8]/35 border-white/15 text-white'
               }`}
             >
-              <Users className="w-4 h-4" />
+              <UserPlus className="w-4 h-4" />
             </span>
             <span className="text-[10px] font-semibold text-white/90 drop-shadow">Dúo</span>
           </button>
+
+          {isLive && (
+            <button
+              type="button"
+              onClick={() => setIsBattleOpen(true)}
+              aria-label="Batalla PK ViroArena"
+              className="flex flex-col items-center gap-1 cursor-pointer group"
+            >
+              <span className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#E84393] to-[#6C5CE7] border border-white/35 flex items-center justify-center text-white shadow-[0_0_18px_rgba(232,67,147,0.45)]">
+                <Swords className="w-4 h-4" />
+              </span>
+              <span className="text-[10px] font-semibold text-white/90 drop-shadow">PK Arena</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -996,31 +1099,78 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
         <div className="absolute bottom-0 inset-x-0 z-20">
           {isLive ? (
             <div className="px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-4 max-w-md mx-auto space-y-3">
+              <AnimatePresence>
+                {partyJoinToast && (
+                  <motion.div
+                    key={partyJoinToast}
+                    initial={{ opacity: 0, x: -24, scale: 0.94 }}
+                    animate={{ opacity: 1, x: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                    transition={{ duration: 0.28 }}
+                    className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-gradient-to-r from-[#E84393]/85 via-[#6C5CE7]/85 to-[#00B4D8]/85 backdrop-blur-xl border border-white/25 text-xs font-extrabold text-white shadow-[0_0_20px_rgba(232,67,147,0.45)]"
+                  >
+                    <span>{partyJoinToast}</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {liveMessages.length > 0 && (
                 <div className="max-h-40 overflow-y-auto no-scrollbar space-y-1.5">
-                  {liveMessages.map((msg) =>
-                    msg.kind === 'gift' ? (
-                      <div
-                        key={msg.id}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
-                      >
-                        <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
-                        <FanLevelBadge level={msg.senderFanLevel || 1} compact />
-                        <span>
-                          <strong className="mr-1">{msg.authorDisplayName}</strong>
-                          {msg.text}
-                        </span>
-                      </div>
-                    ) : msg.kind === 'like' ? (
-                      <div key={msg.id} className="flex items-center gap-2 text-xs">
-                        <Heart className="w-3.5 h-3.5 text-[#E84393] fill-[#E84393] shrink-0" />
-                        <p className="text-white/90 drop-shadow flex items-center flex-wrap gap-1">
-                          <FanLevelBadge level={msg.senderFanLevel || 1} compact />
-                          <span className="font-semibold">{msg.authorDisplayName}</span>
-                          <span>{msg.text}</span>
-                        </p>
-                      </div>
-                    ) : (
+                  {liveMessages.map((msg) => {
+                    const rowIsTop1 = Boolean(
+                      msg.isTop1 || (top1ChatUid && msg.authorId === top1ChatUid),
+                    );
+                    if (msg.kind === 'join') {
+                      return (
+                        <div
+                          key={msg.id}
+                          className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
+                        >
+                          <FanLevelBadge
+                            level={msg.senderFanLevel || 1}
+                            isTop1={rowIsTop1}
+                            compact
+                          />
+                          <span className="font-semibold text-[#CCF4FE]">{msg.text}</span>
+                        </div>
+                      );
+                    }
+                    if (msg.kind === 'gift') {
+                      return (
+                        <div
+                          key={msg.id}
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
+                        >
+                          <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
+                          <FanLevelBadge
+                            level={msg.senderFanLevel || 1}
+                            isTop1={rowIsTop1}
+                            compact
+                          />
+                          <span>
+                            <strong className="mr-1">{msg.authorDisplayName}</strong>
+                            {msg.text}
+                          </span>
+                        </div>
+                      );
+                    }
+                    if (msg.kind === 'like') {
+                      return (
+                        <div key={msg.id} className="flex items-center gap-2 text-xs">
+                          <Heart className="w-3.5 h-3.5 text-[#E84393] fill-[#E84393] shrink-0" />
+                          <p className="text-white/90 drop-shadow flex items-center flex-wrap gap-1">
+                            <FanLevelBadge
+                              level={msg.senderFanLevel || 1}
+                              isTop1={rowIsTop1}
+                              compact
+                            />
+                            <span className="font-semibold">{msg.authorDisplayName}</span>
+                            <span>{msg.text}</span>
+                          </p>
+                        </div>
+                      );
+                    }
+                    return (
                       <div key={msg.id} className="flex items-start gap-2">
                         <AvatarImg
                           src={msg.authorAvatarUrl}
@@ -1030,7 +1180,11 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
                         />
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <FanLevelBadge level={msg.senderFanLevel || 1} compact />
+                            <FanLevelBadge
+                              level={msg.senderFanLevel || 1}
+                              isTop1={rowIsTop1}
+                              compact
+                            />
                             <span className="text-xs font-semibold text-[#00B4D8]">
                               {msg.authorDisplayName}
                             </span>
@@ -1040,8 +1194,8 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
                           </p>
                         </div>
                       </div>
-                    ),
-                  )}
+                    );
+                  })}
                 </div>
               )}
 
@@ -1438,6 +1592,63 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
             );
           }}
           onClose={() => setClubConfigTab(null)}
+        />
+
+        {(() => {
+          const rival =
+            FEATURED_CREATORS.find((c) => c.uid !== currentUser.uid) || FEATURED_CREATORS[0];
+          return (
+            <LiveBattleScreen
+              isOpen={isBattleOpen}
+              hostStreamId={activeStreamId || undefined}
+              creator1={{
+                uid: currentUser.uid,
+                username: currentUser.username,
+                displayName: currentUser.displayName || currentUser.username,
+                avatarUrl: currentUser.avatarUrl,
+                previewUrl:
+                  currentUser.avatarUrl || '/src/assets/images/clip_urban_dance_1795372621458.jpg',
+              }}
+              creator2={{
+                uid: rival.uid,
+                username: rival.username,
+                displayName: rival.displayName,
+                avatarUrl: rival.avatarUrl,
+                previewUrl:
+                  rival.avatarUrl || '/src/assets/images/clip_music_studio_1795372622455.jpg',
+              }}
+              currentUser={currentUser}
+              onClose={() => setIsBattleOpen(false)}
+              onRequestSignIn={onClose}
+            />
+          );
+        })()}
+
+        <MultiGuestLobbyScreen
+          isOpen={isPartyLobbyOpen}
+          liveId={activeStreamId || `studio-${currentUser.uid}`}
+          isFirestoreLive={Boolean(isLive && activeStreamId)}
+          isHost={true}
+          host={{
+            uid: currentUser.uid,
+            username: currentUser.username,
+            displayName: currentUser.displayName || currentUser.username,
+            avatarUrl: currentUser.avatarUrl,
+            previewImageUrl: currentUser.avatarUrl,
+            fanLevel: creatorFanLevel,
+          }}
+          localPreviewStream={streamRef.current}
+          currentUser={currentUser}
+          liveMessages={liveMessages}
+          onOpenBattle={() => {
+            setIsPartyLobbyOpen(false);
+            setIsBattleOpen(true);
+          }}
+          onLocalJoinMessage={(displayName) => {
+            triggerPartyJoinToast(`👋 ${displayName} se ha unido a la fiesta`);
+          }}
+          onClose={() => setIsPartyLobbyOpen(false)}
+          onRequestSignIn={onClose}
         />
       </div>
     </div>

@@ -56,6 +56,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import {
   addClipComment,
   blockUser,
+  completeGoogleRedirectIfPending,
   deleteClipComment,
   deleteUserAccount,
   deleteUserClip,
@@ -78,6 +79,7 @@ import {
   subscribeUserPrivateInfo,
   subscribeUserReactions,
   subscribeUserStreak,
+  subscribeUserWallet,
   toggleClipBookmark,
   toggleClipLike,
   toggleFollowCreator,
@@ -238,8 +240,19 @@ function ViroklipzApp() {
     });
   }, [showToast]);
 
-  // Auth listener
+  // Auth listener + Google mobile redirect completion
   useEffect(() => {
+    void completeGoogleRedirectIfPending()
+      .then((redirectProfile) => {
+        if (redirectProfile) {
+          setCurrentUser(redirectProfile);
+          showToast('Sesión iniciada con Google en Viroklipz', 'success');
+        }
+      })
+      .catch((err) => {
+        showToast(mapAuthErrorMessage(err));
+      });
+
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (!fbUser) {
         setCurrentUser(null);
@@ -265,6 +278,24 @@ function ViroklipzApp() {
     });
     return () => unsub();
   }, [showToast]);
+
+  // Real-time wallet balance sync (coins, freeRoses, welcomeRechargeClaimed)
+  useEffect(() => {
+    if (!authReady || !currentUser?.uid) return;
+    const unsubWallet = subscribeUserWallet(currentUser.uid, (wallet) => {
+      setCurrentUser((prev) =>
+        prev && prev.uid === currentUser.uid
+          ? {
+              ...prev,
+              coins: wallet.coins,
+              freeRoses: wallet.freeRoses,
+              welcomeRechargeClaimed: wallet.welcomeRechargeClaimed,
+            }
+          : prev,
+      );
+    });
+    return () => unsubWallet();
+  }, [authReady, currentUser?.uid]);
 
   // Public clips, active live streams & creator profiles listeners
   useEffect(() => {

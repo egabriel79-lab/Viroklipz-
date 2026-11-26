@@ -86,7 +86,7 @@ service cloud.firestore {
           'uid', 'username', 'displayName', 'bio', 'avatarUrl', 'isPublic', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isAdmin', 'coins', 'followersCount', 'country', 'email', 'age', 'isMinor', 'guardianData', 'createdAt', 'updatedAt'
+          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isBanned', 'isAdmin', 'coins', 'freeRoses', 'welcomeRechargeClaimed', 'followersCount', 'country', 'email', 'age', 'isMinor', 'guardianData', 'createdAt', 'updatedAt'
         ])
         && data.uid == userId
         && isValidUsername(data.username)
@@ -103,8 +103,11 @@ service cloud.firestore {
         && (!('fanLevel' in data) || (data.fanLevel is int && data.fanLevel >= 1 && data.fanLevel <= 50))
         && (!('fanPoints' in data) || (data.fanPoints is int && data.fanPoints >= 0 && data.fanPoints <= 10000000))
         && (!('banned' in data) || data.banned is bool)
+        && (!('isBanned' in data) || data.isBanned is bool)
         && (!('isAdmin' in data) || data.isAdmin is bool)
         && (!('coins' in data) || (data.coins is int && data.coins >= 0 && data.coins <= 100000000))
+        && (!('freeRoses' in data) || (data.freeRoses is int && data.freeRoses >= 0 && data.freeRoses <= 10000))
+        && (!('welcomeRechargeClaimed' in data) || data.welcomeRechargeClaimed is bool)
         && (!('followersCount' in data) || (data.followersCount is int && data.followersCount >= 0 && data.followersCount <= 100000000))
         && (!('country' in data) || (data.country is string && data.country.size() <= 64))
         && (!('email' in data) || (data.email is string && data.email.size() <= 120))
@@ -419,6 +422,7 @@ service cloud.firestore {
           'id', 'hostUid', 'hostUsername', 'hostDisplayName', 'hostAvatarUrl',
           'title', 'about', 'audience', 'quality', 'visualEffect',
           'category', 'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
+          'guests',
           'audioPreset', 'status', 'viewerCount', 'likesCount', 'giftsCount',
           'fanPerks', 'audienceFavorites', 'fanClubName', 'fanPointsPerCoin',
           'vipAlertEnabled', 'vipAlertTitle', 'vipAlertStyle', 'vipAlertDurationSec', 'vipAlertSound',
@@ -443,6 +447,7 @@ service cloud.firestore {
         && (!('guestUid' in data) || (data.guestUid is string && data.guestUid.size() <= 128))
         && (!('guestDisplayName' in data) || (data.guestDisplayName is string && data.guestDisplayName.size() <= 40))
         && (!('guestStreamUrl' in data) || (data.guestStreamUrl is string && data.guestStreamUrl.size() <= 300 && (data.guestStreamUrl.size() == 0 || data.guestStreamUrl.matches('^https://.*'))))
+        && (!('guests' in data) || (data.guests is list && data.guests.size() <= 10 && (data.guests.size() == 0 || data.guests[0] is string)))
         && data.audioPreset in ['urban_beat', 'sunset_house', 'lofi_espresso', 'alpine_rush', 'analog_synth']
         && data.status in ['live', 'ended']
         && data.viewerCount is int && data.viewerCount >= 1 && data.viewerCount <= 1000000
@@ -474,7 +479,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id', 'streamId', 'authorId', 'authorUsername', 'authorDisplayName',
           'authorAvatarUrl', 'text', 'kind', 'giftId', 'giftName', 'giftValue',
-          'senderFanLevel', 'triggeredAction', 'createdAt'
+          'senderFanLevel', 'isTop1', 'triggeredAction', 'createdAt'
         ])
         && data.id == messageId
         && isValidId(data.id)
@@ -485,12 +490,152 @@ service cloud.firestore {
         && data.authorDisplayName is string && data.authorDisplayName.size() >= 1 && data.authorDisplayName.size() <= 40
         && data.authorAvatarUrl is string && data.authorAvatarUrl.size() <= 300
         && data.text is string && data.text.size() >= 1 && data.text.size() <= 180
-        && data.kind in ['chat', 'like', 'gift']
+        && data.kind in ['chat', 'like', 'gift', 'join']
         && (!('giftId' in data) || (data.giftId is string && data.giftId.size() <= 32))
         && (!('giftName' in data) || (data.giftName is string && data.giftName.size() <= 40))
         && (!('giftValue' in data) || (data.giftValue is int && data.giftValue >= 0 && data.giftValue <= 100000))
         && (!('senderFanLevel' in data) || (data.senderFanLevel is int && data.senderFanLevel >= 1 && data.senderFanLevel <= 50))
+        && (!('isTop1' in data) || data.isTop1 is bool)
         && (!('triggeredAction' in data) || (data.triggeredAction is string && data.triggeredAction.size() <= 80))
+        && data.createdAt == request.time;
+    }
+
+    function isValidLiveGuest(data, guestUid, streamId) {
+      return data.keys().hasAll([
+          'uid', 'streamId', 'username', 'displayName', 'avatarUrl',
+          'fanLevel', 'seatIndex', 'muted', 'joinedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'streamId', 'username', 'displayName', 'avatarUrl',
+          'fanLevel', 'seatIndex', 'muted', 'isTop1', 'joinedAt'
+        ])
+        && data.uid == guestUid
+        && isValidId(data.uid)
+        && data.streamId == streamId
+        && isValidId(data.streamId)
+        && isValidUsername(data.username)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40
+        && data.avatarUrl is string && data.avatarUrl.size() <= 300
+        && data.fanLevel is int && data.fanLevel >= 1 && data.fanLevel <= 50
+        && data.seatIndex is int && data.seatIndex >= 0 && data.seatIndex <= 9
+        && data.muted is bool
+        && (!('isTop1' in data) || data.isTop1 is bool)
+        && data.joinedAt is timestamp;
+    }
+
+    function isValidLiveJoinRequest(data, requesterUid, liveId) {
+      return data.keys().hasAll([
+          'id', 'liveId', 'userId', 'username', 'displayName', 'avatarUrl',
+          'fanLevel', 'seatIndex', 'status', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'liveId', 'userId', 'username', 'displayName', 'avatarUrl',
+          'fanLevel', 'seatIndex', 'status', 'createdAt'
+        ])
+        && data.id == requesterUid
+        && isValidId(data.id)
+        && data.liveId == liveId
+        && isValidId(data.liveId)
+        && data.userId == requesterUid
+        && isValidUsername(data.username)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 40
+        && data.avatarUrl is string && data.avatarUrl.size() <= 300
+        && data.fanLevel is int && data.fanLevel >= 1 && data.fanLevel <= 50
+        && data.seatIndex is int && data.seatIndex >= 0 && data.seatIndex <= 9
+        && data.status in ['pending', 'accepted', 'rejected']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCoinRecharge(data, rechargeId, userId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'packageId', 'coinsCredited', 'bonusRoses', 'priceUsd', 'provider', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'packageId', 'coinsCredited', 'bonusRoses', 'priceUsd', 'provider', 'createdAt'
+        ])
+        && data.id == rechargeId
+        && isValidId(data.id)
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && data.packageId in ['pack_starter', 'pack_plus', 'pack_pro', 'pack_vip']
+        && data.coinsCredited is int && data.coinsCredited >= 1 && data.coinsCredited <= 1635
+        && data.bonusRoses is int && data.bonusRoses >= 0 && data.bonusRoses <= 3
+        && data.priceUsd is number && data.priceUsd > 0 && data.priceUsd <= 100
+        && data.provider == 'VexPay'
+        && data.createdAt == request.time;
+    }
+
+    function isValidLiveBattle(data, battleId) {
+      return data.keys().hasAll([
+          'id', 'status', 'durationSec', 'endsAtMs',
+          'creator1Uid', 'creator1Username', 'creator1DisplayName', 'creator1AvatarUrl', 'creator1PreviewUrl', 'creator1Points', 'creator1WinStreak',
+          'creator2Uid', 'creator2Username', 'creator2DisplayName', 'creator2AvatarUrl', 'creator2PreviewUrl', 'creator2Points', 'creator2WinStreak',
+          'startedAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'hostStreamId', 'status', 'durationSec', 'endsAtMs',
+          'creator1Uid', 'creator1Username', 'creator1DisplayName', 'creator1AvatarUrl', 'creator1PreviewUrl', 'creator1StreamUrl', 'creator1Points', 'creator1WinStreak',
+          'creator2Uid', 'creator2Username', 'creator2DisplayName', 'creator2AvatarUrl', 'creator2PreviewUrl', 'creator2StreamUrl', 'creator2Points', 'creator2WinStreak',
+          'lastGiftSender', 'lastGiftName', 'lastGiftTarget', 'lastGiftPoints',
+          'startedAt', 'updatedAt'
+        ])
+        && data.id == battleId
+        && isValidId(data.id)
+        && (!('hostStreamId' in data) || (data.hostStreamId is string && data.hostStreamId.size() <= 128))
+        && data.status in ['active', 'ended']
+        && data.durationSec is int && data.durationSec >= 60 && data.durationSec <= 3600
+        && data.endsAtMs is int && data.endsAtMs >= 0
+        && isValidId(data.creator1Uid)
+        && isValidUsername(data.creator1Username)
+        && data.creator1DisplayName is string && data.creator1DisplayName.size() >= 1 && data.creator1DisplayName.size() <= 40
+        && data.creator1AvatarUrl is string && data.creator1AvatarUrl.size() <= 300
+        && data.creator1PreviewUrl is string && data.creator1PreviewUrl.size() <= 300
+        && (!('creator1StreamUrl' in data) || (data.creator1StreamUrl is string && data.creator1StreamUrl.size() <= 300))
+        && data.creator1Points is int && data.creator1Points >= 0 && data.creator1Points <= 100000000
+        && data.creator1WinStreak is int && data.creator1WinStreak >= 0 && data.creator1WinStreak <= 1000
+        && isValidId(data.creator2Uid)
+        && isValidUsername(data.creator2Username)
+        && data.creator2DisplayName is string && data.creator2DisplayName.size() >= 1 && data.creator2DisplayName.size() <= 40
+        && data.creator2AvatarUrl is string && data.creator2AvatarUrl.size() <= 300
+        && data.creator2PreviewUrl is string && data.creator2PreviewUrl.size() <= 300
+        && (!('creator2StreamUrl' in data) || (data.creator2StreamUrl is string && data.creator2StreamUrl.size() <= 300))
+        && data.creator2Points is int && data.creator2Points >= 0 && data.creator2Points <= 100000000
+        && data.creator2WinStreak is int && data.creator2WinStreak >= 0 && data.creator2WinStreak <= 1000
+        && (!('lastGiftSender' in data) || (data.lastGiftSender is string && data.lastGiftSender.size() <= 40))
+        && (!('lastGiftName' in data) || (data.lastGiftName is string && data.lastGiftName.size() <= 40))
+        && (!('lastGiftTarget' in data) || data.lastGiftTarget in ['creator1', 'creator2'])
+        && (!('lastGiftPoints' in data) || (data.lastGiftPoints is int && data.lastGiftPoints >= 0 && data.lastGiftPoints <= 100000))
+        && data.startedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isLiveBattleActive(battleId) {
+      return exists(/databases/$(database)/documents/liveBattles/$(battleId))
+        && get(/databases/$(database)/documents/liveBattles/$(battleId)).data.status == 'active';
+    }
+
+    function isValidLiveBattleGift(data, giftId, battleId) {
+      return data.keys().hasAll([
+          'id', 'battleId', 'targetSlot', 'senderUid', 'senderUsername', 'senderDisplayName',
+          'senderAvatarUrl', 'giftId', 'giftName', 'coins', 'points', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'battleId', 'targetSlot', 'senderUid', 'senderUsername', 'senderDisplayName',
+          'senderAvatarUrl', 'giftId', 'giftName', 'coins', 'points', 'createdAt'
+        ])
+        && data.id == giftId
+        && isValidId(data.id)
+        && data.battleId == battleId
+        && isValidId(data.battleId)
+        && data.targetSlot in ['creator1', 'creator2']
+        && data.senderUid == request.auth.uid
+        && isValidUsername(data.senderUsername)
+        && data.senderDisplayName is string && data.senderDisplayName.size() >= 1 && data.senderDisplayName.size() <= 40
+        && data.senderAvatarUrl is string && data.senderAvatarUrl.size() <= 300
+        && data.giftId is string && data.giftId.size() >= 1 && data.giftId.size() <= 32
+        && data.giftName is string && data.giftName.size() >= 1 && data.giftName.size() <= 40
+        && data.coins is int && data.coins >= 0 && data.coins <= 100000
+        && data.points is int && data.points >= 1 && data.points <= 100000
         && data.createdAt == request.time;
     }
 
@@ -508,7 +653,10 @@ service cloud.firestore {
         && incoming().uid == request.auth.uid
         && !('isAdmin' in incoming())
         && !('banned' in incoming())
-        && !('coins' in incoming())
+        && !('isBanned' in incoming())
+        && (!('coins' in incoming()) || incoming().coins == 0)
+        && (!('freeRoses' in incoming()) || incoming().freeRoses == 0)
+        && (!('welcomeRechargeClaimed' in incoming()) || incoming().welcomeRechargeClaimed == false)
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isVerified() && isValidId(userId)
@@ -521,13 +669,23 @@ service cloud.firestore {
             isOwner(userId)
             && incoming().uid == request.auth.uid
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'country', 'updatedAt'
+              'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'coins', 'freeRoses', 'welcomeRechargeClaimed', 'country', 'updatedAt'
             ])
+            && (
+              !('coins' in incoming().diff(existing()).affectedKeys())
+              || ('coins' in existing() && incoming().coins <= existing().coins + 1635)
+              || (!('coins' in existing()) && incoming().coins <= 1635)
+            )
+            && (
+              !('freeRoses' in incoming().diff(existing()).affectedKeys())
+              || ('freeRoses' in existing() && incoming().freeRoses <= existing().freeRoses + 3)
+              || (!('freeRoses' in existing()) && incoming().freeRoses <= 3)
+            )
           )
           ||
           (
             isAdmin()
-            && incoming().diff(existing()).affectedKeys().hasOnly(['banned', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['isBanned', 'banned', 'updatedAt'])
           )
         );
       allow delete: if isVerified() && isValidId(userId) && (isOwner(userId) || isAdmin());
@@ -594,6 +752,14 @@ service cloud.firestore {
           && isValidUserBlock(incoming(), userId, targetId);
         allow update: if false;
         allow delete: if isVerified() && isValidId(userId) && isValidId(targetId) && isOwner(userId);
+      }
+
+      match /recharges/{rechargeId} {
+        allow get: if isValidId(userId) && isValidId(rechargeId) && (isOwner(userId) || isAdmin());
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isVerified() && isValidId(userId) && isValidId(rechargeId) && isOwner(userId)
+          && isValidCoinRecharge(incoming(), rechargeId, userId);
+        allow update, delete: if false;
       }
     }
 
@@ -866,6 +1032,7 @@ service cloud.firestore {
                 && incoming().diff(existing()).affectedKeys().hasOnly([
                   'title', 'about', 'audience', 'quality', 'visualEffect', 'category',
                   'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
+                  'guests',
                   'fanPerks', 'audienceFavorites', 'fanClubName', 'fanPointsPerCoin',
                   'vipAlertEnabled', 'vipAlertTitle', 'vipAlertStyle', 'vipAlertDurationSec', 'vipAlertSound',
                   'status', 'viewerCount', 'updatedAt'
@@ -912,6 +1079,72 @@ service cloud.firestore {
             || isAdmin()
           );
       }
+
+      match /guests/{guestUid} {
+        allow get: if isValidId(streamId) && isValidId(guestUid)
+          && (isLiveStreamActive(streamId) || isOwner(guestUid) || isAdmin());
+        allow list: if existing().streamId == streamId;
+        allow create: if isVerified() && isValidId(streamId) && isValidId(guestUid)
+          && isLiveStreamActive(streamId)
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+          && isValidLiveGuest(incoming(), guestUid, streamId)
+          && incoming().joinedAt == request.time;
+        allow update: if isVerified() && isValidId(streamId) && isValidId(guestUid)
+          && isLiveStreamActive(streamId)
+          && isValidLiveGuest(incoming(), guestUid, streamId)
+          && incoming().uid == existing().uid
+          && incoming().streamId == existing().streamId
+          && incoming().joinedAt == existing().joinedAt
+          && (
+            (
+              get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+              && incoming().diff(existing()).affectedKeys().hasOnly(['muted', 'seatIndex', 'isTop1'])
+            )
+            ||
+            (
+              isOwner(guestUid)
+              && incoming().diff(existing()).affectedKeys().hasOnly(['muted'])
+            )
+          );
+        allow delete: if isVerified() && isValidId(streamId) && isValidId(guestUid)
+          && (
+            isOwner(guestUid)
+            || get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+            || isAdmin()
+          );
+      }
+
+      match /joinRequests/{requesterUid} {
+        allow get: if isSignedIn() && isValidId(streamId) && isValidId(requesterUid)
+          && (
+            isOwner(requesterUid)
+            || get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+            || isAdmin()
+          );
+        allow list: if isSignedIn() && existing().liveId == streamId;
+        allow create: if isVerified() && isValidId(streamId) && isValidId(requesterUid)
+          && isOwner(requesterUid)
+          && isLiveStreamActive(streamId)
+          && isValidLiveJoinRequest(incoming(), requesterUid, streamId)
+          && incoming().userId == request.auth.uid
+          && incoming().status == 'pending'
+          && incoming().createdAt == request.time;
+        allow update: if isVerified() && isValidId(streamId) && isValidId(requesterUid)
+          && isLiveStreamActive(streamId)
+          && isValidLiveJoinRequest(incoming(), requesterUid, streamId)
+          && incoming().id == existing().id
+          && incoming().liveId == existing().liveId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'seatIndex']);
+        allow delete: if isVerified() && isValidId(streamId) && isValidId(requesterUid)
+          && (
+            isOwner(requesterUid)
+            || get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostUid == request.auth.uid
+            || isAdmin()
+          );
+      }
     }
 
     match /liveConfigs/{creatorUid} {
@@ -925,6 +1158,70 @@ service cloud.firestore {
         && incoming().creatorUid == existing().creatorUid
         && incoming().updatedAt == request.time;
       allow delete: if isVerified() && isValidId(creatorUid) && (isOwner(creatorUid) || isAdmin());
+    }
+
+    match /liveBattles/{battleId} {
+      allow get: if isValidId(battleId) && resource != null && (
+        existing().status == 'active'
+        || (isSignedIn() && (existing().creator1Uid == request.auth.uid || existing().creator2Uid == request.auth.uid))
+        || isAdmin()
+      );
+      allow list: if existing().status == 'active'
+        || (isSignedIn() && (existing().creator1Uid == request.auth.uid || existing().creator2Uid == request.auth.uid))
+        || isBootstrappedOwner();
+      allow create: if isVerified() && isValidId(battleId)
+        && isValidLiveBattle(incoming(), battleId)
+        && (incoming().creator1Uid == request.auth.uid || isAdmin())
+        && incoming().status == 'active'
+        && incoming().creator1Points == 0
+        && incoming().creator2Points == 0
+        && incoming().startedAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(battleId)
+        && isValidLiveBattle(incoming(), battleId)
+        && incoming().id == existing().id
+        && incoming().creator1Uid == existing().creator1Uid
+        && incoming().creator2Uid == existing().creator2Uid
+        && incoming().startedAt == existing().startedAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            (existing().creator1Uid == request.auth.uid || isAdmin())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'endsAtMs', 'creator1Points', 'creator2Points', 'creator1WinStreak', 'creator2WinStreak', 'updatedAt'
+            ])
+          )
+          ||
+          (
+            existing().status == 'active'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'creator1Points', 'lastGiftSender', 'lastGiftName', 'lastGiftTarget', 'lastGiftPoints', 'updatedAt'
+            ])
+            && incoming().creator1Points > existing().creator1Points
+            && incoming().creator1Points <= existing().creator1Points + 100000
+          )
+          ||
+          (
+            existing().status == 'active'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'creator2Points', 'lastGiftSender', 'lastGiftName', 'lastGiftTarget', 'lastGiftPoints', 'updatedAt'
+            ])
+            && incoming().creator2Points > existing().creator2Points
+            && incoming().creator2Points <= existing().creator2Points + 100000
+          )
+        );
+      allow delete: if isVerified() && isValidId(battleId) && (existing().creator1Uid == request.auth.uid || isAdmin());
+
+      match /gifts/{giftId} {
+        allow get: if isValidId(battleId) && isValidId(giftId) && (isLiveBattleActive(battleId) || isAdmin());
+        allow list: if existing().battleId == battleId && isLiveBattleActive(battleId);
+        allow create: if isVerified() && isValidId(battleId) && isValidId(giftId)
+          && isLiveBattleActive(battleId)
+          && isValidLiveBattleGift(incoming(), giftId, battleId);
+        allow update: if false;
+        allow delete: if isVerified() && isValidId(battleId) && isValidId(giftId)
+          && (existing().senderUid == request.auth.uid || isAdmin());
+      }
     }
   }
 }

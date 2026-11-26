@@ -23,7 +23,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   String? _busyUid;
 
   Future<void> _handleToggleBan(AdminUserModel user) async {
-    final targetBanned = !user.banned;
+    final targetBanned = !user.isBanned;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -33,14 +33,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           side: const BorderSide(color: AdminColors.border),
         ),
         title: Text(
-          targetBanned ? 'Suspender cuenta' : 'Reactivar cuenta',
+          targetBanned ? 'Suspender usuario' : 'Reactivar usuario',
           style: const TextStyle(color: AdminColors.textPrimary),
         ),
         content: Text(
           targetBanned
-              ? '¿Confirmas suspender a @${user.username}? Se guardará banned: true en Firestore.'
-              : '¿Confirmas reactivar a @${user.username}? Se guardará banned: false en Firestore.',
-          style: const TextStyle(color: AdminColors.textSecondary, fontSize: 13.5),
+              ? '¿Confirmas suspender a @${user.username}? Se actualizará isBanned: true en Firestore.'
+              : '¿Confirmas reactivar a @${user.username}? Se actualizará isBanned: false en Firestore.',
+          style: const TextStyle(
+            color: AdminColors.textSecondary,
+            fontSize: 13.5,
+          ),
         ),
         actions: [
           TextButton(
@@ -51,7 +54,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
             onPressed: () => Navigator.of(ctx).pop(true),
             style: ElevatedButton.styleFrom(
               backgroundColor:
-                  targetBanned ? AdminColors.danger : AdminColors.success,
+                  targetBanned ? AdminColors.magenta : AdminColors.electricBlue,
               foregroundColor: Colors.white,
             ),
             child: Text(targetBanned ? 'Suspender' : 'Reactivar'),
@@ -66,18 +69,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     try {
       await AdminFirestoreService.instance.setUserBanned(
         uid: user.uid,
-        banned: targetBanned,
+        isBanned: targetBanned,
       );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             targetBanned
-                ? 'Cuenta @${user.username} suspendida.'
-                : 'Cuenta @${user.username} reactivada.',
+                ? 'Usuario @${user.username} suspendido (isBanned: true).'
+                : 'Usuario @${user.username} reactivado.',
           ),
           backgroundColor:
-              targetBanned ? AdminColors.danger : AdminColors.success,
+              targetBanned ? AdminColors.magenta : AdminColors.success,
         ),
       );
     } catch (e) {
@@ -93,98 +96,17 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     }
   }
 
-  void _showUserProfileDialog(AdminUserModel user) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AdminColors.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: AdminColors.border),
-        ),
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: AdminColors.purple,
-              backgroundImage: user.avatarUrl.startsWith('http')
-                  ? NetworkImage(user.avatarUrl)
-                  : null,
-              child: user.avatarUrl.startsWith('http')
-                  ? null
-                  : Text(
-                      user.displayName.isNotEmpty
-                          ? user.displayName[0].toUpperCase()
-                          : 'U',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    user.displayName,
-                    style: const TextStyle(
-                      color: AdminColors.textPrimary,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Text(
-                    '@${user.username}',
-                    style: const TextStyle(
-                      color: AdminColors.electricBlue,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _DetailRow(label: 'UID', value: user.uid),
-              _DetailRow(label: 'Correo', value: user.email),
-              _DetailRow(label: 'País', value: user.country),
-              _DetailRow(label: 'Monedas', value: '${user.coins}'),
-              _DetailRow(label: 'Seguidores', value: '${user.followersCount}'),
-              _DetailRow(label: 'Nivel de Fan', value: 'Nivel ${user.fanLevel}'),
-              _DetailRow(
-                label: 'Estado',
-                value: user.banned ? 'Suspendido (banned: true)' : 'Activo',
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final query = widget.searchQuery.trim().toLowerCase();
     final filteredUsers = widget.users.where((u) {
-      if (_statusFilter == 'active' && u.banned) return false;
-      if (_statusFilter == 'banned' && !u.banned) return false;
+      if (_statusFilter == 'active' && u.isBanned) return false;
+      if (_statusFilter == 'banned' && !u.isBanned) return false;
       if (query.isEmpty) return true;
       return u.displayName.toLowerCase().contains(query) ||
           u.username.toLowerCase().contains(query) ||
           u.email.toLowerCase().contains(query) ||
+          u.country.toLowerCase().contains(query) ||
           u.uid.toLowerCase().contains(query);
     }).toList();
 
@@ -212,7 +134,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Administra cuentas, revisa perfiles y suspende usuarios infractores',
+                    'Lista en tiempo real desde la colección users de Firestore',
                     style: TextStyle(
                       color: AdminColors.textSecondary,
                       fontSize: 13,
@@ -261,15 +183,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                             minWidth: constraints.maxWidth,
                           ),
                           child: DataTable(
-                            columnSpacing: 20,
+                            columnSpacing: 22,
                             dataRowMinHeight: 58,
                             dataRowMaxHeight: 68,
                             columns: const [
                               DataColumn(label: Text('Avatar')),
                               DataColumn(label: Text('Nombre')),
                               DataColumn(label: Text('Email')),
-                              DataColumn(label: Text('Monedas')),
-                              DataColumn(label: Text('Seguidores')),
+                              DataColumn(label: Text('Países')),
                               DataColumn(label: Text('Estado')),
                               DataColumn(label: Text('Acciones')),
                             ],
@@ -280,7 +201,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                   DataCell(
                                     CircleAvatar(
                                       radius: 18,
-                                      backgroundColor: AdminColors.royalBlue,
+                                      backgroundColor: AdminColors.magenta,
                                       backgroundImage:
                                           user.avatarUrl.startsWith('http')
                                               ? NetworkImage(user.avatarUrl)
@@ -307,42 +228,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              user.displayName,
-                                              style: const TextStyle(
-                                                color: AdminColors.textPrimary,
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            if (user.isAdmin) ...[
-                                              const SizedBox(width: 6),
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                  horizontal: 6,
-                                                  vertical: 2,
-                                                ),
-                                                decoration: BoxDecoration(
-                                                  color: AdminColors.purple
-                                                      .withValues(alpha: 0.25),
-                                                  borderRadius:
-                                                      BorderRadius.circular(6),
-                                                ),
-                                                child: const Text(
-                                                  'ADMIN',
-                                                  style: TextStyle(
-                                                    color: AdminColors
-                                                        .electricBlue,
-                                                    fontSize: 9.5,
-                                                    fontWeight: FontWeight.w800,
-                                                  ),
-                                                ),
-                                              ),
-                                            ],
-                                          ],
+                                        Text(
+                                          user.displayName,
+                                          style: const TextStyle(
+                                            color: AdminColors.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                          ),
                                         ),
                                         Text(
                                           '@${user.username}',
@@ -356,86 +247,65 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                                   ),
                                   DataCell(Text(user.email)),
                                   DataCell(
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.monetization_on_rounded,
-                                          size: 16,
-                                          color: AdminColors.warning,
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 5,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: AdminColors.surfaceElevated,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: AdminColors.border,
                                         ),
-                                        const SizedBox(width: 5),
-                                        Text(
-                                          '${user.coins}',
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                          ),
+                                      ),
+                                      child: Text(
+                                        user.country,
+                                        style: const TextStyle(
+                                          color: AdminColors.electricBlue,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
                                         ),
-                                      ],
+                                      ),
                                     ),
                                   ),
-                                  DataCell(Text('${user.followersCount}')),
-                                  DataCell(_StatusBadge(banned: user.banned)),
                                   DataCell(
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        OutlinedButton.icon(
-                                          onPressed: () =>
-                                              _showUserProfileDialog(user),
-                                          icon: const Icon(
-                                            Icons.visibility_outlined,
-                                            size: 15,
-                                          ),
-                                          label: const Text('Ver Perfil'),
-                                          style: OutlinedButton.styleFrom(
-                                            foregroundColor:
-                                                AdminColors.electricBlue,
-                                            side: const BorderSide(
-                                              color: AdminColors.border,
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 10,
-                                            ),
-                                            textStyle: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
+                                    _StatusBadge(isBanned: user.isBanned),
+                                  ),
+                                  DataCell(
+                                    ElevatedButton.icon(
+                                      onPressed: isBusy
+                                          ? null
+                                          : () => _handleToggleBan(user),
+                                      icon: Icon(
+                                        user.isBanned
+                                            ? Icons.check_circle_outline_rounded
+                                            : Icons.block_rounded,
+                                        size: 16,
+                                      ),
+                                      label: Text(
+                                        user.isBanned
+                                            ? 'Reactivar'
+                                            : 'Suspender',
+                                      ),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: user.isBanned
+                                            ? AdminColors.electricBlue
+                                            : AdminColors.magenta,
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 11,
                                         ),
-                                        const SizedBox(width: 8),
-                                        ElevatedButton.icon(
-                                          onPressed: isBusy
-                                              ? null
-                                              : () => _handleToggleBan(user),
-                                          icon: Icon(
-                                            user.banned
-                                                ? Icons.check_circle_outline
-                                                : Icons.block_rounded,
-                                            size: 15,
-                                          ),
-                                          label: Text(
-                                            user.banned
-                                                ? 'Reactivar'
-                                                : 'Suspender Cuenta',
-                                          ),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: user.banned
-                                                ? AdminColors.success
-                                                : AdminColors.danger,
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 10,
-                                            ),
-                                            textStyle: const TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(11),
                                         ),
-                                      ],
+                                        textStyle: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -454,12 +324,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 }
 
 class _StatusBadge extends StatelessWidget {
-  final bool banned;
-  const _StatusBadge({required this.banned});
+  final bool isBanned;
+  const _StatusBadge({required this.isBanned});
 
   @override
   Widget build(BuildContext context) {
-    final color = banned ? AdminColors.danger : AdminColors.success;
+    final color = isBanned ? AdminColors.magenta : AdminColors.success;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -468,51 +338,12 @@ class _StatusBadge extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.45)),
       ),
       child: Text(
-        banned ? 'Suspendido' : 'Activo',
+        isBanned ? 'Suspendido' : 'Activo',
         style: TextStyle(
           color: color,
           fontSize: 11.5,
           fontWeight: FontWeight.w700,
         ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  final String label;
-  final String value;
-  const _DetailRow({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: AdminColors.textMuted,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Expanded(
-            child: SelectableText(
-              value,
-              style: const TextStyle(
-                color: AdminColors.textPrimary,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

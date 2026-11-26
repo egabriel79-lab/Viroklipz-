@@ -37,7 +37,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   @override
   void didUpdateWidget(covariant AdminLoginScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.initialError != null && widget.initialError != oldWidget.initialError) {
+    if (widget.initialError != null &&
+        widget.initialError != oldWidget.initialError) {
       _errorMessage = widget.initialError;
     }
   }
@@ -67,6 +68,12 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     } on AdminAccessDeniedException catch (e) {
       if (!mounted) return;
       setState(() => _errorMessage = e.message);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          backgroundColor: AdminColors.danger,
+        ),
+      );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       setState(() => _errorMessage = _mapAuthError(e.code));
@@ -115,7 +122,10 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
             )
           : Column(
               children: [
-                const SizedBox(height: 220, child: _BrandShowcasePanel(compact: true)),
+                const SizedBox(
+                  height: 210,
+                  child: _BrandShowcasePanel(compact: true),
+                ),
                 Expanded(child: _buildFormPanel()),
               ],
             ),
@@ -133,11 +143,13 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
             decoration: BoxDecoration(
               color: AdminColors.surface,
               borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: AdminColors.border),
+              border: Border.all(
+                color: AdminColors.magenta.withValues(alpha: 0.28),
+              ),
               boxShadow: [
                 BoxShadow(
-                  color: AdminColors.purple.withValues(alpha: 0.14),
-                  blurRadius: 40,
+                  color: AdminColors.magenta.withValues(alpha: 0.14),
+                  blurRadius: 42,
                   offset: const Offset(0, 18),
                 ),
               ],
@@ -151,16 +163,25 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
                         decoration: BoxDecoration(
-                          color: AdminColors.royalBlue.withValues(alpha: 0.14),
+                          gradient: LinearGradient(
+                            colors: [
+                              AdminColors.magenta.withValues(alpha: 0.18),
+                              AdminColors.electricBlue.withValues(alpha: 0.18),
+                            ],
+                          ),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                            color: AdminColors.electricBlue.withValues(alpha: 0.35),
+                            color:
+                                AdminColors.electricBlue.withValues(alpha: 0.4),
                           ),
                         ),
                         child: const Text(
-                          'ACCESO PRIVADO',
+                          'ACCESO PRIVADO · ADMIN',
                           style: TextStyle(
                             color: AdminColors.electricBlue,
                             fontSize: 11,
@@ -173,16 +194,16 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   ),
                   const SizedBox(height: 16),
                   const Text(
-                    'Iniciar sesión como Admin',
+                    'Panel Administrativo Viroklipz',
                     style: TextStyle(
                       color: AdminColors.textPrimary,
-                      fontSize: 24,
+                      fontSize: 23,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Ingresa con tu cuenta autorizada (isAdmin: true en Firestore).',
+                    'Ingresa con el correo autorizado Egabriel79@gmail.com.',
                     style: TextStyle(
                       color: AdminColors.textSecondary,
                       fontSize: 13,
@@ -193,10 +214,10 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     Container(
                       padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: AdminColors.danger.withValues(alpha: 0.14),
+                        color: AdminColors.danger.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: AdminColors.danger.withValues(alpha: 0.55),
+                          color: AdminColors.danger.withValues(alpha: 0.6),
                         ),
                       ),
                       child: Row(
@@ -225,7 +246,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     const SizedBox(height: 18),
                   ],
                   const Text(
-                    'Correo electrónico',
+                    'Correo',
                     style: TextStyle(
                       color: AdminColors.textSecondary,
                       fontSize: 12,
@@ -237,10 +258,17 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
-                    style: const TextStyle(color: AdminColors.textPrimary, fontSize: 14),
+                    style: const TextStyle(
+                      color: AdminColors.textPrimary,
+                      fontSize: 14,
+                    ),
                     decoration: const InputDecoration(
-                      hintText: 'admin@viroklipz.com',
-                      prefixIcon: Icon(Icons.mail_outline_rounded, size: 19),
+                      hintText: 'Egabriel79@gmail.com',
+                      prefixIcon: Icon(
+                        Icons.mail_outline_rounded,
+                        size: 19,
+                        color: AdminColors.electricBlue,
+                      ),
                     ),
                     validator: (value) {
                       final text = (value ?? '').trim();
@@ -265,13 +293,21 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                     obscureText: _obscurePassword,
                     textInputAction: TextInputAction.done,
                     onFieldSubmitted: (_) => _handleLogin(),
-                    style: const TextStyle(color: AdminColors.textPrimary, fontSize: 14),
+                    style: const TextStyle(
+                      color: AdminColors.textPrimary,
+                      fontSize: 14,
+                    ),
                     decoration: InputDecoration(
                       hintText: '••••••••••••',
-                      prefixIcon: const Icon(Icons.lock_outline_rounded, size: 19),
+                      prefixIcon: const Icon(
+                        Icons.lock_outline_rounded,
+                        size: 19,
+                        color: AdminColors.magenta,
+                      ),
                       suffixIcon: IconButton(
-                        onPressed: () =>
-                            setState(() => _obscurePassword = !_obscurePassword),
+                        onPressed: () => setState(
+                          () => _obscurePassword = !_obscurePassword,
+                        ),
                         icon: Icon(
                           _obscurePassword
                               ? Icons.visibility_outlined
@@ -295,14 +331,14 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                         borderRadius: BorderRadius.circular(14),
                         gradient: const LinearGradient(
                           colors: [
-                            AdminColors.electricBlue,
-                            AdminColors.royalBlue,
+                            AdminColors.magenta,
                             AdminColors.purple,
+                            AdminColors.electricBlue,
                           ],
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: AdminColors.royalBlue.withValues(alpha: 0.35),
+                            color: AdminColors.magenta.withValues(alpha: 0.35),
                             blurRadius: 18,
                             offset: const Offset(0, 8),
                           ),
@@ -327,11 +363,11 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                                 ),
                               )
                             : const Text(
-                                'Acceder',
+                                'Iniciar Sesión',
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 15,
-                                  fontWeight: FontWeight.w700,
+                                  fontWeight: FontWeight.w800,
                                 ),
                               ),
                       ),
@@ -360,9 +396,9 @@ class _BrandShowcasePanel extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color(0xFF09122C),
-            Color(0xFF17184A),
-            Color(0xFF2D1259),
+            Color(0xFF070A16),
+            Color(0xFF141236),
+            Color(0xFF280E32),
           ],
         ),
       ),
@@ -388,7 +424,7 @@ class _BrandShowcasePanel extends StatelessWidget {
               height: 320,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: AdminColors.purple.withValues(alpha: 0.24),
+                color: AdminColors.magenta.withValues(alpha: 0.22),
               ),
             ),
           ),
@@ -397,26 +433,27 @@ class _BrandShowcasePanel extends StatelessWidget {
               padding: EdgeInsets.all(compact ? 20 : 48),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment:
-                    compact ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+                crossAxisAlignment: compact
+                    ? CrossAxisAlignment.center
+                    : CrossAxisAlignment.start,
                 children: [
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Container(
-                        width: compact ? 44 : 56,
-                        height: compact ? 44 : 56,
+                        width: compact ? 44 : 58,
+                        height: compact ? 44 : 58,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
                           gradient: const LinearGradient(
                             colors: [
+                              AdminColors.magenta,
                               AdminColors.electricBlue,
-                              AdminColors.purple,
                             ],
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: AdminColors.electricBlue.withValues(alpha: 0.4),
+                              color: AdminColors.magenta.withValues(alpha: 0.45),
                               blurRadius: 24,
                             ),
                           ],
@@ -424,14 +461,14 @@ class _BrandShowcasePanel extends StatelessWidget {
                         child: const Icon(
                           Icons.play_arrow_rounded,
                           color: Colors.white,
-                          size: 32,
+                          size: 34,
                         ),
                       ),
                       const SizedBox(width: 14),
                       RichText(
                         text: TextSpan(
                           style: TextStyle(
-                            fontSize: compact ? 26 : 34,
+                            fontSize: compact ? 26 : 36,
                             fontWeight: FontWeight.w900,
                             letterSpacing: -0.6,
                           ),
@@ -442,7 +479,7 @@ class _BrandShowcasePanel extends StatelessWidget {
                             ),
                             TextSpan(
                               text: 'klipz',
-                              style: TextStyle(color: AdminColors.electricBlue),
+                              style: TextStyle(color: AdminColors.magenta),
                             ),
                           ],
                         ),
@@ -463,7 +500,7 @@ class _BrandShowcasePanel extends StatelessWidget {
                   if (!compact) ...[
                     const SizedBox(height: 14),
                     const Text(
-                      'Administra métricas en tiempo real, cuentas de creadores, transmisiones Live activas y moderación de reportes desde una consola Web exclusiva para escritorio.',
+                      'Administra métricas de crecimiento, cuentas de creadores, transmisiones Live activas y moderación de reportes en tiempo real con Flutter Web y Firestore.',
                       style: TextStyle(
                         color: Color(0xFFCBD5E1),
                         fontSize: 14.5,
@@ -471,17 +508,17 @@ class _BrandShowcasePanel extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 28),
-                    Wrap(
+                    const Wrap(
                       spacing: 12,
                       runSpacing: 12,
-                      children: const [
+                      children: [
                         _FeatureChip(
                           icon: Icons.verified_user_rounded,
-                          label: 'Verificación isAdmin',
+                          label: 'Acceso Exclusivo Admin',
                         ),
                         _FeatureChip(
                           icon: Icons.analytics_rounded,
-                          label: 'KPIs en vivo',
+                          label: 'Métricas fl_chart',
                         ),
                         _FeatureChip(
                           icon: Icons.gavel_rounded,
@@ -513,7 +550,9 @@ class _FeatureChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+        border: Border.all(
+          color: AdminColors.electricBlue.withValues(alpha: 0.3),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

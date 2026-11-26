@@ -4,6 +4,7 @@ import { Check, Eye, EyeOff, ShieldCheck, X } from 'lucide-react';
 import {
   mapAuthErrorMessage,
   signInWithEmail,
+  signInWithGoogle,
   signUpWithEmail,
 } from '../lib/viroklipzService';
 import { MAX_DISPLAY_NAME_LEN, MAX_EMAIL_LEN } from '../lib/validation';
@@ -40,6 +41,7 @@ export function AuthModal({
 
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [localSnackBar, setLocalSnackBar] = useState<string | null>(null);
   const snackTimerRef = useRef<number | null>(null);
@@ -171,6 +173,63 @@ export function AuthModal({
     }
   };
 
+  const handleGoogleAuth = async () => {
+    setAuthError(null);
+    let overrides: Parameters<typeof signInWithGoogle>[0] | undefined;
+
+    if (mode === 'signup' && ageInput.trim() !== '') {
+      if (!isValidAgeNumber || parsedAge === null) {
+        setAuthError('Ingresa una edad válida (entre 1 y 120) o déjala vacía para continuar.');
+        return;
+      }
+      if (parsedAge < 18) {
+        const cleanGuardianName = guardianName.trim();
+        const cleanGuardianSurname = guardianSurname.trim();
+        const cleanGuardianId = guardianId.trim();
+        if (
+          !cleanGuardianName ||
+          !cleanGuardianSurname ||
+          cleanGuardianId.length < 3 ||
+          !guardianAuthorized
+        ) {
+          const msg = 'Debes contar con la autorización de un tutor legal';
+          setAuthError(msg);
+          triggerSnackBar(msg);
+          return;
+        }
+        overrides = {
+          ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+          age: parsedAge,
+          isMinor: true,
+          guardianData: {
+            name: cleanGuardianName,
+            surname: cleanGuardianSurname,
+            id: cleanGuardianId,
+            authorized: true,
+          },
+        };
+      } else {
+        overrides = {
+          ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+          age: parsedAge,
+          isMinor: false,
+        };
+      }
+    }
+
+    setGoogleSubmitting(true);
+    try {
+      const profile = await signInWithGoogle(overrides);
+      if (profile) {
+        onSuccess(profile);
+      }
+    } catch (err) {
+      setAuthError(mapAuthErrorMessage(err));
+    } finally {
+      setGoogleSubmitting(false);
+    }
+  };
+
   const fullGuardianDisplay =
     `${guardianName.trim()} ${guardianSurname.trim()}`.trim() || '[Nombre del tutor]';
   const guardianIdDisplay = guardianId.trim() || '[Cédula]';
@@ -230,6 +289,51 @@ export function AuthModal({
             {authError}
           </div>
         )}
+
+        <button
+          type="button"
+          disabled={submitting || googleSubmitting}
+          onClick={() => void handleGoogleAuth()}
+          className="w-full min-h-[46px] px-4 rounded-xl bg-zinc-100 dark:bg-white text-zinc-950 hover:bg-zinc-200 dark:hover:bg-zinc-100 disabled:opacity-50 border border-zinc-300 dark:border-white/20 text-sm font-semibold flex items-center justify-center gap-2.5 shadow-sm transition-colors cursor-pointer"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            className="w-4 h-4 shrink-0"
+          >
+            <path
+              fill="#4285F4"
+              d="M23.745 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-8.97Z"
+            />
+            <path
+              fill="#34A853"
+              d="M12 24c3.3 0 6.08-1.09 8.1-2.96l-3.88-3.05c-1.09.74-2.49 1.18-4.22 1.18-3.25 0-6-2.19-6.98-5.15H1.01v3.14C3.05 21.2 7.24 24 12 24Z"
+            />
+            <path
+              fill="#FBBC05"
+              d="M5.02 14.02A7.22 7.22 0 0 1 4.64 12c0-.7.13-1.38.38-2.02V6.84H1.01A11.98 11.98 0 0 0 0 12c0 1.93.46 3.76 1.01 5.16l4.01-3.14Z"
+            />
+            <path
+              fill="#EA4335"
+              d="M12 4.75c1.8 0 3.41.62 4.68 1.84l3.51-3.51C18.07 1.19 15.3 0 12 0 7.24 0 3.05 2.8 1.01 6.84l4.01 3.14c.98-2.96 3.73-5.23 6.98-5.23Z"
+            />
+          </svg>
+          <span>
+            {googleSubmitting
+              ? 'Conectando con Google...'
+              : mode === 'signup'
+                ? 'Registrarse con Google'
+                : 'Continuar con Google'}
+          </span>
+        </button>
+
+        <div className="flex items-center gap-3">
+          <div className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
+          <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+            o con correo electrónico
+          </span>
+          <div className="h-px flex-1 bg-zinc-200 dark:bg-white/10" />
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
           {mode === 'signup' && (
@@ -445,7 +549,7 @@ export function AuthModal({
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || googleSubmitting}
             className="w-full min-h-[46px] rounded-xl bg-neon-cta disabled:opacity-50 text-white text-sm font-semibold transition-all cursor-pointer"
           >
             {submitting

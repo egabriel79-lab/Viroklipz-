@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Eye, Radio, Users } from 'lucide-react';
+import { ArrowLeft, Eye, Radio, Swords, Users } from 'lucide-react';
 import { VISUAL_PRESETS } from '../data/starterClips';
 import {
   DEFAULT_AUDIENCE_FAVORITES,
@@ -22,6 +22,7 @@ import type {
 } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
+import { LiveBattleScreen } from './LiveBattleScreen';
 import { LiveViewerScreen } from './LiveViewerScreen';
 
 export interface LiveStreamItem {
@@ -200,6 +201,7 @@ export function LiveStreamsScreen({
 }: LiveStreamsScreenProps) {
   const [categoryFilter, setCategoryFilter] = useState<'todos' | ClipCategory>('todos');
   const [activeStreamUid, setActiveStreamUid] = useState<string | null>(null);
+  const [isBattleOpen, setIsBattleOpen] = useState(false);
 
   const filteredStreams = useMemo(() => {
     if (categoryFilter === 'todos') return liveStreams;
@@ -215,6 +217,12 @@ export function LiveStreamsScreen({
     if (!activeStream) return -1;
     return liveStreams.findIndex((s) => s.creator.uid === activeStream.creator.uid);
   }, [liveStreams, activeStream]);
+
+  const opponentStream = useMemo(() => {
+    if (!activeStream || liveStreams.length <= 1) return null;
+    const nextIdx = (activeStreamIndex + 1) % liveStreams.length;
+    return liveStreams[nextIdx] || null;
+  }, [activeStream, activeStreamIndex, liveStreams]);
 
   useEffect(() => {
     if (isOpen && initialStreamUid) {
@@ -240,6 +248,7 @@ export function LiveStreamsScreen({
     return (
       <LiveViewerScreen
         stream={activeStream}
+        opponentStream={opponentStream}
         streamsCount={liveStreams.length}
         currentUser={currentUser}
         followingIds={followingIds}
@@ -284,17 +293,30 @@ export function LiveStreamsScreen({
           </span>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            onClose();
-            onStartOwnLive();
-          }}
-          className="min-h-[38px] px-3.5 rounded-xl bg-gradient-to-r from-[#00B4D8] via-[#6C5CE7] to-[#E84393] text-white text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow"
-        >
-          <Radio className="w-3.5 h-3.5" />
-          Transmitir
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {liveStreams.length >= 2 && (
+            <button
+              type="button"
+              onClick={() => setIsBattleOpen(true)}
+              className="min-h-[38px] px-3 rounded-xl bg-[#181B2E] hover:bg-[#232742] border border-[#E84393]/55 text-white text-xs font-extrabold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow-[0_0_16px_rgba(232,67,147,0.3)]"
+            >
+              <Swords className="w-3.5 h-3.5 text-[#E84393]" />
+              <span>ViroArena PK</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onStartOwnLive();
+            }}
+            className="min-h-[38px] px-3.5 rounded-xl bg-gradient-to-r from-[#00B4D8] via-[#6C5CE7] to-[#E84393] text-white text-xs font-bold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer shadow"
+          >
+            <Radio className="w-3.5 h-3.5" />
+            Transmitir
+          </button>
+        </div>
       </header>
 
       {/* Category Filter Strip */}
@@ -419,6 +441,32 @@ export function LiveStreamsScreen({
           </div>
         )}
       </div>
+
+      {liveStreams.length >= 2 && (
+        <LiveBattleScreen
+          isOpen={isBattleOpen}
+          hostStreamId={liveStreams[0].streamId}
+          creator1={{
+            uid: liveStreams[0].creator.uid,
+            username: liveStreams[0].creator.username,
+            displayName: liveStreams[0].creator.displayName,
+            avatarUrl: liveStreams[0].creator.avatarUrl,
+            previewUrl: liveStreams[0].previewImageUrl,
+            streamUrl: liveStreams[0].videoUrl,
+          }}
+          creator2={{
+            uid: liveStreams[1].creator.uid,
+            username: liveStreams[1].creator.username,
+            displayName: liveStreams[1].creator.displayName,
+            avatarUrl: liveStreams[1].creator.avatarUrl,
+            previewUrl: liveStreams[1].previewImageUrl,
+            streamUrl: liveStreams[1].videoUrl,
+          }}
+          currentUser={currentUser}
+          onClose={() => setIsBattleOpen(false)}
+          onRequestSignIn={onRequestSignIn}
+        />
+      )}
     </div>
   );
 }

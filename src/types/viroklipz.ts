@@ -61,6 +61,9 @@ export interface UserProfile {
   mutedCommunityChat?: boolean;
   fanLevel?: number;
   fanPoints?: number;
+  coins?: number;
+  freeRoses?: number;
+  welcomeRechargeClaimed?: boolean;
   age?: number;
   isMinor?: boolean;
   guardianData?: GuardianAuthorizationData;
@@ -225,6 +228,32 @@ export interface CreatorLiveConfig {
   updatedAtMs: number;
 }
 
+export interface LiveGuestRecord {
+  uid: string;
+  streamId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  fanLevel: number;
+  seatIndex: number;
+  muted: boolean;
+  isTop1?: boolean;
+  joinedAtMs: number;
+}
+
+export interface LiveJoinRequest {
+  id: string;
+  liveId: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  fanLevel: number;
+  seatIndex: number;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAtMs: number;
+}
+
 export interface LiveStreamRecord {
   id: string;
   hostUid: string;
@@ -242,6 +271,7 @@ export interface LiveStreamRecord {
   guestUid?: string;
   guestDisplayName?: string;
   guestStreamUrl?: string;
+  guests?: string[];
   audioPreset: AudioPreset;
   status: LiveStreamStatus;
   viewerCount: number;
@@ -268,13 +298,71 @@ export interface LiveStreamMessage {
   authorDisplayName: string;
   authorAvatarUrl: string;
   text: string;
-  kind: 'chat' | 'like' | 'gift';
+  kind: 'chat' | 'like' | 'gift' | 'join';
   giftId?: string;
   giftName?: string;
   giftValue?: number;
   senderFanLevel?: number;
+  isTop1?: boolean;
   triggeredAction?: string;
   createdAtMs: number;
 }
 
+export type GiftCategoryTab = 'populares' | 'club_fans' | 'viroarena' | 'nivel_donador';
 
+export interface RechargePackage {
+  id: string;
+  baseCoins: number;
+  bonusCoins: number;
+  totalCoins: number;
+  priceUsd: number;
+  priceLabel: string;
+  badge?: string;
+}
+
+export type LiveBattleStatus = 'active' | 'ended';
+
+export interface LiveBattleRecord {
+  id: string;
+  hostStreamId?: string;
+  status: LiveBattleStatus;
+  durationSec: number;
+  endsAtMs: number;
+  creator1Uid: string;
+  creator1Username: string;
+  creator1DisplayName: string;
+  creator1AvatarUrl: string;
+  creator1PreviewUrl: string;
+  creator1StreamUrl?: string;
+  creator1Points: number;
+  creator1WinStreak: number;
+  creator2Uid: string;
+  creator2Username: string;
+  creator2DisplayName: string;
+  creator2AvatarUrl: string;
+  creator2PreviewUrl: string;
+  creator2StreamUrl?: string;
+  creator2Points: number;
+  creator2WinStreak: number;
+  lastGiftSender?: string;
+  lastGiftName?: string;
+  lastGiftTarget?: 'creator1' | 'creator2';
+  lastGiftPoints?: number;
+  startedAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface LiveBattleGiftEvent {
+  id: string;
+  battleId: string;
+  targetSlot: 'creator1' | 'creator2';
+  senderUid: string;
+  senderUsername: string;
+  senderDisplayName: string;
+  senderAvatarUrl: string;
+  giftId: string;
+  giftName: string;
+  coins: number;
+  points: number;
+  createdAtMs: number;
+}

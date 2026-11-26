@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { GoogleGenAI } from '@google/genai';
+import crypto from 'crypto';
 import express, { type Request, type Response } from 'express';
 import fs from 'fs';
 import http from 'http';
@@ -11,6 +12,60 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const VEXPAY_SIGNING_SECRET =
+  String(process.env.VEXPAY_WEBHOOK_SECRET || '').trim() ||
+  crypto.randomBytes(32).toString('hex');
+
+interface ServerRechargePackage {
+  id: string;
+  baseCoins: number;
+  bonusCoins: number;
+  totalCoins: number;
+  priceUsd: number;
+  priceLabel: string;
+}
+
+const VEXPAY_PACKAGES: Record<string, ServerRechargePackage> = {
+  pack_starter: {
+    id: 'pack_starter',
+    baseCoins: 5,
+    bonusCoins: 37,
+    totalCoins: 42,
+    priceUsd: 0.08,
+    priceLabel: 'USD 0.08',
+  },
+  pack_plus: {
+    id: 'pack_plus',
+    baseCoins: 70,
+    bonusCoins: 47,
+    totalCoins: 117,
+    priceUsd: 1.0,
+    priceLabel: 'USD 1.00',
+  },
+  pack_pro: {
+    id: 'pack_pro',
+    baseCoins: 350,
+    bonusCoins: 60,
+    totalCoins: 410,
+    priceUsd: 5.0,
+    priceLabel: 'USD 5.00',
+  },
+  pack_vip: {
+    id: 'pack_vip',
+    baseCoins: 1400,
+    bonusCoins: 235,
+    totalCoins: 1635,
+    priceUsd: 20.0,
+    priceLabel: 'USD 20.00',
+  },
+};
+
+function signVexPaySession(transactionId: string, packageId: string, isFirstRecharge: boolean): string {
+  return crypto
+    .createHmac('sha256', VEXPAY_SIGNING_SECRET)
+    .update(`${transactionId}:${packageId}:${isFirstRecharge ? '1' : '0'}`)
+    .digest('hex');
+}
 
 function isBlockedPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
@@ -194,6 +249,139 @@ async function startServer() {
           : 'No se pudo generar la descripción con IA en este momento.';
       res.status(502).json({ error: message });
     }
+  });
+
+  app.get('/api/vexpay/packages', (_req: Request, res: Response) => {
+    const gatewayUrl = validateSafeHttpsUrl(process.env.VEXPAY_API_URL || '');
+    const apiKey = String(process.env.VEXPAY_API_KEY || '').trim();
+    res.json({
+      provider: 'VexPay',
+      externalGatewayActive: Boolean(gatewayUrl && apiKey),
+      welcomeBonusRoses: 3,
+      packages: Object.values(VEXPAY_PACKAGES),
+    });
+  });
+
+  app.post('/api/vexpay/create-checkout', async (req: Request, res: Response) => {
+    const authHeader = String(req.headers.authorization || '');
+    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7).trim().length < 20) {
+      res.status(401).json({ error: 'Inicia sesión para recargar monedas con VexPay.' });
+      return;
+    }
+
+    const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+    const packageId = typeof body.packageId === 'string' ? body.packageId.trim() : '';
+    const isFirstRecharge = Boolean(body.isFirstRecharge);
+    const pkg = VEXPAY_PACKAGES[packageId];
+
+    if (!pkg) {
+      res.status(400).json({ error: 'Paquete de monedas no válido.' });
+      return;
+    }
+
+    const transactionId = `vxp_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+    const gatewayUrl = validateSafeHttpsUrl(process.env.VEXPAY_API_URL || '');
+    const apiKey = String(process.env.VEXPAY_API_KEY || '').trim();
+    const merchantId = String(process.env.VEXPAY_MERCHANT_ID || '').trim();
+
+    if (gatewayUrl && apiKey) {
+      try {
+        const upstream = await fetch(gatewayUrl.toString(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+            ...(merchantId ? { 'X-Merchant-Id': merchantId } : {}),
+          },
+          body: JSON.stringify({
+            referenceId: transactionId,
+            packageId: pkg.id,
+            amountUsd: pkg.priceUsd,
+            currency: 'USD',
+            coins: pkg.totalCoins,
+            welcomeBonusRoses: isFirstRecharge ? 3 : 0,
+            description: `Recarga Viroklipz ${pkg.totalCoins} Monedas (${pkg.priceLabel})`,
+          }),
+        });
+
+        if (!upstream.ok) {
+          res.status(502).json({ error: 'VexPay no pudo crear la orden de pago.' });
+          return;
+        }
+
+        const data = (await upstream.json()) as {
+          checkoutUrl?: unknown;
+          sessionId?: unknown;
+          status?: unknown;
+        };
+        const safeCheckoutUrl =
+          typeof data.checkoutUrl === 'string' ? validateSafeHttpsUrl(data.checkoutUrl) : null;
+        const signature = signVexPaySession(transactionId, pkg.id, isFirstRecharge);
+        res.json({
+          provider: 'VexPay',
+          mode: safeCheckoutUrl ? 'external' : 'sandbox',
+          transactionId,
+          signature,
+          checkoutUrl: safeCheckoutUrl ? safeCheckoutUrl.toString() : undefined,
+          package: pkg,
+          bonusRoses: isFirstRecharge ? 3 : 0,
+        });
+        return;
+      } catch {
+        res.status(502).json({ error: 'Error conectando con la pasarela VexPay.' });
+        return;
+      }
+    }
+
+    const signature = signVexPaySession(transactionId, pkg.id, isFirstRecharge);
+    res.json({
+      provider: 'VexPay',
+      mode: 'sandbox',
+      transactionId,
+      signature,
+      package: pkg,
+      bonusRoses: isFirstRecharge ? 3 : 0,
+    });
+  });
+
+  app.post('/api/vexpay/confirm-checkout', (req: Request, res: Response) => {
+    const authHeader = String(req.headers.authorization || '');
+    if (!authHeader.startsWith('Bearer ') || authHeader.slice(7).trim().length < 20) {
+      res.status(401).json({ error: 'Inicia sesión para confirmar el pago con VexPay.' });
+      return;
+    }
+
+    const body = typeof req.body === 'object' && req.body !== null ? req.body : {};
+    const transactionId =
+      typeof body.transactionId === 'string' ? body.transactionId.trim() : '';
+    const packageId = typeof body.packageId === 'string' ? body.packageId.trim() : '';
+    const signature = typeof body.signature === 'string' ? body.signature.trim() : '';
+    const isFirstRecharge = Boolean(body.isFirstRecharge);
+
+    const pkg = VEXPAY_PACKAGES[packageId];
+    if (!pkg || !/^vxp_[a-zA-Z0-9]{10,40}$/.test(transactionId) || !/^[a-f0-9]{64}$/.test(signature)) {
+      res.status(400).json({ error: 'Datos de comprobante VexPay inválidos.' });
+      return;
+    }
+
+    const expectedSig = signVexPaySession(transactionId, pkg.id, isFirstRecharge);
+    const sigBuf = Buffer.from(signature, 'hex');
+    const expBuf = Buffer.from(expectedSig, 'hex');
+    if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+      res.status(403).json({ error: 'Firma de verificación VexPay rechazada.' });
+      return;
+    }
+
+    res.json({
+      verified: true,
+      provider: 'VexPay',
+      transactionId,
+      packageId: pkg.id,
+      coinsCredited: pkg.totalCoins,
+      bonusRoses: isFirstRecharge ? 3 : 0,
+      priceUsd: pkg.priceUsd,
+      priceLabel: pkg.priceLabel,
+    });
   });
 
   app.get('/api/oembed', (req: Request, res: Response) => {

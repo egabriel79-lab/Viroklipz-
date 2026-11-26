@@ -6,7 +6,6 @@ import 'firebase_options.dart';
 import 'models/admin_models.dart';
 import 'screens/admin_login_screen.dart';
 import 'screens/dashboard_screen.dart';
-import 'screens/finance_settings_screens.dart';
 import 'screens/moderation_screen.dart';
 import 'screens/user_management_screen.dart';
 import 'services/admin_firestore_service.dart';
@@ -90,7 +89,7 @@ class _AdminAuthGateState extends State<_AdminAuthGate> {
       return const Scaffold(
         backgroundColor: AdminColors.background,
         body: Center(
-          child: CircularProgressIndicator(color: AdminColors.electricBlue),
+          child: CircularProgressIndicator(color: AdminColors.magenta),
         ),
       );
     }
@@ -204,6 +203,7 @@ class _AdminWorkspaceShellState extends State<_AdminWorkspaceShell> {
         return DashboardScreen(
           users: users,
           clips: clips,
+          reports: reports,
           activeLives: lives,
           searchQuery: _searchQuery,
         );
@@ -218,13 +218,6 @@ class _AdminWorkspaceShellState extends State<_AdminWorkspaceShell> {
           clips: clips,
           searchQuery: _searchQuery,
         );
-      case AdminSection.finance:
-        return FinanceScreen(
-          users: users,
-          activeLives: lives,
-        );
-      case AdminSection.settings:
-        return AdminSettingsScreen(adminUser: widget.adminUser);
     }
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Check,
   ChevronDown,
@@ -13,18 +13,21 @@ import {
   Share2,
   Sparkles,
   Star,
+  Swords,
   UserPlus,
   Users,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { audioEngine } from '../lib/audioEngine';
 import {
   DEFAULT_AUDIENCE_FAVORITES,
   DEFAULT_FAN_CLUB_NAME,
   DEFAULT_FAN_PERKS,
   DEFAULT_VIP_ALERT_CONFIG,
+  FULLSCREEN_GIFT_THRESHOLD_COINS,
   LIVE_GIFTS_CATALOG,
   resolveFanLevel,
   VIP_ALERT_STYLES,
@@ -33,6 +36,8 @@ import {
 import {
   adjustLiveStreamViewer,
   incrementLiveStreamLike,
+  InsufficientCoinsError,
+  sendLivePartyJoinAnnouncement,
   sendLiveStreamGift,
   sendLiveStreamMessage,
   subscribeCreatorLiveConfig,
@@ -47,10 +52,20 @@ import type {
 } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
+import { FirstRechargeModal } from './FirstRechargeModal';
+import {
+  FullScreenGiftAnimationOverlay,
+  type FullScreenGiftAnimationEvent,
+} from './FullScreenGiftAnimationOverlay';
+import { GiftCatalogSheet } from './GiftCatalogSheet';
+import { LiveBattleScreen } from './LiveBattleScreen';
 import type { LiveStreamItem } from './LiveStreamsScreen';
+import { MultiGuestLobbyScreen } from './MultiGuestLobbyScreen';
+import { ViroArenaCountdownBanner } from './ViroArenaCountdownBanner';
 
 interface LiveViewerScreenProps {
   stream: LiveStreamItem;
+  opponentStream?: LiveStreamItem | null;
   streamsCount: number;
   currentUser: UserProfile | null;
   followingIds: Set<string>;
@@ -64,11 +79,14 @@ interface LiveViewerScreenProps {
 
 interface LiveChatItem {
   id: string;
+  authorId?: string;
   username: string;
   avatarUrl?: string;
   fanLevel?: number;
+  isTop1?: boolean;
+  giftValue?: number;
   text: string;
-  kind: 'chat' | 'like' | 'gift';
+  kind: 'chat' | 'like' | 'gift' | 'join';
 }
 
 interface FloatingHeart {
@@ -99,6 +117,7 @@ function formatCompactCount(count: number): string {
 
 export function LiveViewerScreen({
   stream,
+  opponentStream = null,
   streamsCount,
   currentUser,
   followingIds,
@@ -117,6 +136,16 @@ export function LiveViewerScreen({
   const [localGifts, setLocalGifts] = useState(stream.giftsCount ?? 0);
   const [floatingHearts, setFloatingHearts] = useState<FloatingHeart[]>([]);
   const [isGiftDrawerOpen, setIsGiftDrawerOpen] = useState(false);
+  const [sendingGift, setSendingGift] = useState(false);
+  const [isRechargeOpen, setIsRechargeOpen] = useState(false);
+  const [missingGiftForRecharge, setMissingGiftForRecharge] = useState<string | null>(null);
+  const [pendingGiftAfterRecharge, setPendingGiftAfterRecharge] =
+    useState<LiveGiftCatalogItem | null>(null);
+  const [isBattleOpen, setIsBattleOpen] = useState(false);
+  const [interactivePulse, setInteractivePulse] = useState<{
+    giftName: string;
+    effect: string;
+  } | null>(null);
   const [isFavoritesPanelOpen, setIsFavoritesPanelOpen] = useState(false);
   const [clubPanelTab, setClubPanelTab] = useState<'favorites' | 'perks'>('favorites');
   const [fanPerks, setFanPerks] = useState<FanClubPerk[]>(
@@ -153,15 +182,23 @@ export function LiveViewerScreen({
   const [activeGiftBanner, setActiveGiftBanner] = useState<{ sender: string; giftName: string } | null>(
     null,
   );
+  const [fullscreenGiftEvent, setFullscreenGiftEvent] =
+    useState<FullScreenGiftAnimationEvent | null>(null);
   const [vipBanner, setVipBanner] = useState<VipNotificationBanner | null>(null);
   const [multiplayerSplit, setMultiplayerSplit] = useState(
     Boolean(stream.guestDisplayName || stream.guestStreamUrl),
   );
+  const [isPartyLobbyOpen, setIsPartyLobbyOpen] = useState(false);
+  const [partyJoinToast, setPartyJoinToast] = useState<string | null>(null);
   const [roomToast, setRoomToast] = useState<string | null>(null);
 
   const hostVideoRef = useRef<HTMLVideoElement | null>(null);
   const guestVideoRef = useRef<HTMLVideoElement | null>(null);
   const seenVipMsgIdsRef = useRef<Set<string>>(new Set());
+  const seenFullscreenMsgIdsRef = useRef<Set<string>>(new Set());
+  const seenJoinMsgIdsRef = useRef<Set<string>>(new Set());
+  const announcedJoinStreamRef = useRef<Set<string>>(new Set());
+  const joinToastTimerRef = useRef<number | null>(null);
   const vipTimerRef = useRef<number | null>(null);
   const giftTimerRef = useRef<number | null>(null);
   const mutedRef = useRef(muted);
@@ -204,15 +241,30 @@ export function LiveViewerScreen({
     );
   };
 
+  const triggerPartyJoinToast = useCallback((message: string) => {
+    setPartyJoinToast(message);
+    if (joinToastTimerRef.current) window.clearTimeout(joinToastTimerRef.current);
+    joinToastTimerRef.current = window.setTimeout(() => {
+      setPartyJoinToast((curr) => (curr === message ? null : curr));
+    }, 3200);
+  }, []);
+
   useEffect(() => {
     setMultiplayerSplit(Boolean(stream.guestDisplayName || stream.guestStreamUrl));
+    setIsPartyLobbyOpen(false);
     setLocalLikes(stream.viewerCount * 3);
     setLocalGifts(stream.giftsCount ?? 0);
     setIsGiftDrawerOpen(false);
     setIsFavoritesPanelOpen(false);
+    setIsRechargeOpen(false);
+    setIsBattleOpen(false);
+    setInteractivePulse(null);
     setChatDraft('');
     setVipBanner(null);
+    setFullscreenGiftEvent(null);
     seenVipMsgIdsRef.current.clear();
+    seenFullscreenMsgIdsRef.current.clear();
+    seenJoinMsgIdsRef.current.clear();
     setFanPerks(stream.fanPerks?.length ? stream.fanPerks : DEFAULT_FAN_PERKS);
     setAudienceFavorites(
       stream.audienceFavorites?.length
@@ -289,11 +341,17 @@ export function LiveViewerScreen({
 
   // Real-time Firestore live messages & viewer counter
   useEffect(() => {
+    const actorName = currentUser?.displayName || currentUser?.username || 'Invitado';
+    const actorLevel = currentUser
+      ? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)
+      : 1;
+
     if (!stream.isFirestoreLive || !stream.streamId) {
       setFirestoreMessages([]);
       setLocalMessages([
         {
           id: `welcome-${stream.creator.uid}-1`,
+          authorId: stream.creator.uid,
           username: stream.creator.displayName,
           avatarUrl: stream.creator.avatarUrl,
           fanLevel: resolveFanLevel(stream.creator.fanLevel),
@@ -301,13 +359,26 @@ export function LiveViewerScreen({
           kind: 'chat',
         },
         {
-          id: `welcome-${stream.creator.uid}-2`,
-          username: 'Comunidad Viroklipz',
-          fanLevel: 5,
-          text: 'le dio un me gusta al LIVE',
-          kind: 'like',
+          id: `welcome-${stream.creator.uid}-top1`,
+          authorId: 'top-supporter-showcase',
+          username: 'ValeriaVIP',
+          fanLevel: 14,
+          isTop1: true,
+          giftValue: 7000,
+          text: 'envió Coche Deportivo (7000 monedas)',
+          kind: 'gift',
+        },
+        {
+          id: `welcome-${stream.creator.uid}-join`,
+          authorId: currentUser?.uid,
+          username: actorName,
+          avatarUrl: currentUser?.avatarUrl,
+          fanLevel: actorLevel,
+          text: `👋 ${actorName} se ha unido a la fiesta`,
+          kind: 'join',
         },
       ]);
+      triggerPartyJoinToast(`👋 ${actorName} se ha unido a la fiesta`);
       return;
     }
 
@@ -330,9 +401,62 @@ export function LiveViewerScreen({
           });
         }
       }
+
+      const latestJoin = [...msgs]
+        .reverse()
+        .find((m) => m.kind === 'join' && !seenJoinMsgIdsRef.current.has(m.id));
+      if (latestJoin) {
+        seenJoinMsgIdsRef.current.add(latestJoin.id);
+        const isFreshJoin =
+          !latestJoin.createdAtMs || Date.now() - latestJoin.createdAtMs < 12_000;
+        if (isFreshJoin) {
+          triggerPartyJoinToast(
+            latestJoin.text || `👋 ${latestJoin.authorDisplayName} se ha unido a la fiesta`,
+          );
+        }
+      }
+
+      const latestGiant = [...msgs]
+        .reverse()
+        .find(
+          (m) =>
+            m.kind === 'gift' &&
+            (m.giftValue ?? 0) > FULLSCREEN_GIFT_THRESHOLD_COINS &&
+            !seenFullscreenMsgIdsRef.current.has(m.id),
+        );
+      if (latestGiant) {
+        seenFullscreenMsgIdsRef.current.add(latestGiant.id);
+        const isFresh =
+          !latestGiant.createdAtMs || Date.now() - latestGiant.createdAtMs < 15_000;
+        if (isFresh && latestGiant.authorId !== currentUser?.uid) {
+          const catalogGift: LiveGiftCatalogItem =
+            LIVE_GIFTS_CATALOG.find(
+              (g) =>
+                g.id === latestGiant.giftId ||
+                g.name.toLowerCase() === (latestGiant.giftName || '').toLowerCase(),
+            ) || {
+              id: latestGiant.giftId || 'giant',
+              name: latestGiant.giftName || 'Regalo Gigante',
+              coins: latestGiant.giftValue || 600,
+              category: 'nivel_donador',
+              accent: 'from-[#E84393] via-[#6C5CE7] to-[#00B4D8]',
+              iconKind: 'aurora',
+            };
+          setFullscreenGiftEvent({
+            id: `fs-msg-${latestGiant.id}`,
+            senderName: latestGiant.authorDisplayName,
+            gift: catalogGift,
+          });
+        }
+      }
     });
     if (currentUser && currentUser.uid !== stream.creator.uid) {
       void adjustLiveStreamViewer(streamId, 1);
+      if (!announcedJoinStreamRef.current.has(streamId)) {
+        announcedJoinStreamRef.current.add(streamId);
+        void sendLivePartyJoinAnnouncement(streamId, currentUser);
+        triggerPartyJoinToast(`👋 ${actorName} se ha unido a la fiesta`);
+      }
     }
 
     return () => {
@@ -341,7 +465,7 @@ export function LiveViewerScreen({
         void adjustLiveStreamViewer(streamId, -1);
       }
     };
-  }, [stream, currentUser]);
+  }, [stream, currentUser, triggerPartyJoinToast]);
 
   const showRoomNotice = (msg: string) => {
     setRoomToast(msg);
@@ -429,6 +553,18 @@ export function LiveViewerScreen({
     }, 900);
   };
 
+  const handleCompleteFullscreenGift = useCallback((eventId: string) => {
+    setFullscreenGiftEvent((curr) => (curr?.id === eventId ? null : curr));
+  }, []);
+
+  const triggerInteractiveScreenEffect = (gift: LiveGiftCatalogItem) => {
+    if (!gift.interactiveEffect || gift.coins > FULLSCREEN_GIFT_THRESHOLD_COINS) return;
+    setInteractivePulse({ giftName: gift.name, effect: gift.interactiveEffect });
+    window.setTimeout(() => {
+      setInteractivePulse((curr) => (curr?.giftName === gift.name ? null : curr));
+    }, 3200);
+  };
+
   const handleSendGift = async (gift: LiveGiftCatalogItem) => {
     if (!currentUser) {
       setIsGiftDrawerOpen(false);
@@ -436,78 +572,132 @@ export function LiveViewerScreen({
       onRequestSignIn();
       return;
     }
-    setIsGiftDrawerOpen(false);
-    setIsFavoritesPanelOpen(false);
+
+    const currentViewerLevel =
+      localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints);
+    if (gift.requiredFanLevel && currentViewerLevel < gift.requiredFanLevel) {
+      showRoomNotice(`Nivel ${gift.requiredFanLevel} requerido para enviar ${gift.name}`);
+      return;
+    }
+
+    const userCoins = currentUser.coins ?? 0;
+    const userFreeRoses = currentUser.freeRoses ?? 0;
+    const coveredByRose = gift.id === 'rosa' && userFreeRoses > 0;
+
+    if (!coveredByRose && userCoins < gift.coins) {
+      setIsGiftDrawerOpen(false);
+      setIsFavoritesPanelOpen(false);
+      setMissingGiftForRecharge(gift.name);
+      setPendingGiftAfterRecharge(gift);
+      setIsRechargeOpen(true);
+      return;
+    }
+
+    setSendingGift(true);
     const senderName = currentUser.displayName || currentUser.username;
 
-    if (stream.isFirestoreLive && stream.streamId) {
-      try {
-        const result = await sendLiveStreamGift(stream.streamId, currentUser, {
+    try {
+      const result = await sendLiveStreamGift(
+        stream.isFirestoreLive && stream.streamId ? stream.streamId : '',
+        currentUser,
+        {
           id: gift.id,
           name: gift.name,
           value: gift.coins,
+        },
+      );
+
+      setIsGiftDrawerOpen(false);
+      setIsFavoritesPanelOpen(false);
+      triggerInteractiveScreenEffect(gift);
+
+      const isGiantGift = gift.coins > FULLSCREEN_GIFT_THRESHOLD_COINS;
+      if (isGiantGift) {
+        setFullscreenGiftEvent({
+          id: `fs-live-${Date.now()}`,
+          senderName,
+          gift,
         });
+      }
+
+      if (stream.isFirestoreLive && stream.streamId) {
         setLocalFanLevelOverride(result.newFanLevel);
-        if (result.matchedFavorite) {
+        if (result.matchedFavorite && !isGiantGift) {
           triggerVipNotification({
             viewerName: senderName,
             giftName: gift.name,
             action: result.matchedFavorite.action,
           });
-        } else {
+        } else if (!isGiantGift) {
           setActiveGiftBanner({ sender: senderName, giftName: gift.name });
           if (giftTimerRef.current) window.clearTimeout(giftTimerRef.current);
           giftTimerRef.current = window.setTimeout(() => setActiveGiftBanner(null), 2600);
         }
-      } catch (err) {
+        return;
+      }
+
+      const localMatch = audienceFavorites.find(
+        (f) =>
+          f.giftId.toLowerCase() === gift.id.toLowerCase() ||
+          f.giftName.trim().toLowerCase() === gift.name.trim().toLowerCase(),
+      );
+      const nextLevel = Math.min(
+        50,
+        Math.max(
+          1,
+          (localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)) +
+            (gift.coins >= 50 ? 1 : 0),
+        ),
+      );
+      setLocalFanLevelOverride(nextLevel);
+      setLocalGifts((prev) => prev + 1);
+
+      if (localMatch && !isGiantGift) {
+        triggerVipNotification({
+          viewerName: senderName,
+          giftName: gift.name,
+          action: localMatch.action,
+        });
+      } else if (!isGiantGift) {
+        setActiveGiftBanner({ sender: senderName, giftName: gift.name });
+        if (giftTimerRef.current) window.clearTimeout(giftTimerRef.current);
+        giftTimerRef.current = window.setTimeout(() => setActiveGiftBanner(null), 2600);
+      }
+
+      const localGiftText = isGiantGift
+        ? `¡${senderName} acaba de enviar un ${gift.name} gigante!`
+        : localMatch
+          ? `envió ${gift.name} · Acción: ${localMatch.action}`
+          : result.usedFreeRose
+            ? `envió ${gift.name} de bienvenida`
+            : `envió ${gift.name} (${gift.coins} monedas)`;
+
+      setLocalMessages((prev) =>
+        [
+          ...prev,
+          {
+            id: `gift-${Date.now()}`,
+            username: senderName,
+            avatarUrl: currentUser.avatarUrl,
+            fanLevel: nextLevel,
+            text: localGiftText,
+            kind: 'gift' as const,
+          },
+        ].slice(-45),
+      );
+    } catch (err) {
+      if (err instanceof InsufficientCoinsError) {
+        setIsGiftDrawerOpen(false);
+        setIsFavoritesPanelOpen(false);
+        setMissingGiftForRecharge(gift.name);
+        setPendingGiftAfterRecharge(gift);
+        setIsRechargeOpen(true);
+      } else {
         showRoomNotice(err instanceof Error ? err.message : 'No se pudo enviar el regalo');
       }
-      return;
+    } finally {
+      setSendingGift(false);
     }
-
-    const localMatch = audienceFavorites.find(
-      (f) =>
-        f.giftId.toLowerCase() === gift.id.toLowerCase() ||
-        f.giftName.trim().toLowerCase() === gift.name.trim().toLowerCase(),
-    );
-    const nextLevel = Math.min(
-      50,
-      Math.max(
-        1,
-        (localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)) +
-          (gift.coins >= 50 ? 1 : 0),
-      ),
-    );
-    setLocalFanLevelOverride(nextLevel);
-    setLocalGifts((prev) => prev + 1);
-
-    if (localMatch) {
-      triggerVipNotification({
-        viewerName: senderName,
-        giftName: gift.name,
-        action: localMatch.action,
-      });
-    } else {
-      setActiveGiftBanner({ sender: senderName, giftName: gift.name });
-      if (giftTimerRef.current) window.clearTimeout(giftTimerRef.current);
-      giftTimerRef.current = window.setTimeout(() => setActiveGiftBanner(null), 2600);
-    }
-
-    setLocalMessages((prev) =>
-      [
-        ...prev,
-        {
-          id: `gift-${Date.now()}`,
-          username: senderName,
-          avatarUrl: currentUser.avatarUrl,
-          fanLevel: nextLevel,
-          text: localMatch
-            ? `envió ${gift.name} · Acción: ${localMatch.action}`
-            : `envió ${gift.name} (${gift.coins} monedas)`,
-          kind: 'gift' as const,
-        },
-      ].slice(-45),
-    );
   };
 
   const handleShareLive = async () => {
@@ -543,26 +733,54 @@ export function LiveViewerScreen({
   const activeVipStylePreset =
     VIP_ALERT_STYLES.find((s) => s.id === vipAlertStyle) || VIP_ALERT_STYLES[0];
 
-  const messages: LiveChatItem[] = stream.isFirestoreLive
-    ? [
-        {
-          id: `welcome-${stream.creator.uid}`,
-          username: stream.creator.displayName,
-          avatarUrl: stream.creator.avatarUrl,
-          fanLevel: hostFanLevel,
-          text: stream.about?.trim() || `¡Bienvenidos al vivo! ${stream.streamTitle}`,
-          kind: 'chat',
-        },
-        ...firestoreMessages.map((m) => ({
-          id: m.id,
-          username: m.authorDisplayName,
-          avatarUrl: m.authorAvatarUrl,
-          fanLevel: m.senderFanLevel ?? 1,
-          text: m.text,
-          kind: m.kind,
-        })),
-      ]
-    : localMessages;
+  const messages: LiveChatItem[] = useMemo(
+    () =>
+      stream.isFirestoreLive
+        ? [
+            {
+              id: `welcome-${stream.creator.uid}`,
+              authorId: stream.creator.uid,
+              username: stream.creator.displayName,
+              avatarUrl: stream.creator.avatarUrl,
+              fanLevel: hostFanLevel,
+              text: stream.about?.trim() || `¡Bienvenidos al vivo! ${stream.streamTitle}`,
+              kind: 'chat',
+            },
+            ...firestoreMessages.map((m) => ({
+              id: m.id,
+              authorId: m.authorId,
+              username: m.authorDisplayName,
+              avatarUrl: m.authorAvatarUrl,
+              fanLevel: m.senderFanLevel ?? 1,
+              isTop1: m.isTop1,
+              giftValue: m.giftValue,
+              text: m.text,
+              kind: m.kind,
+            })),
+          ]
+        : localMessages,
+    [stream, hostFanLevel, firestoreMessages, localMessages],
+  );
+
+  const top1ChatUid = useMemo(() => {
+    const totals = new Map<string, number>();
+    for (const m of messages) {
+      if (!m.authorId) continue;
+      if (m.isTop1) return m.authorId;
+      if (m.kind === 'gift') {
+        totals.set(m.authorId, (totals.get(m.authorId) || 0) + (m.giftValue || 10));
+      }
+    }
+    let bestUid: string | null = null;
+    let bestScore = 0;
+    for (const [uid, score] of totals.entries()) {
+      if (score > bestScore) {
+        bestScore = score;
+        bestUid = uid;
+      }
+    }
+    return bestUid;
+  }, [messages]);
 
   return (
     <div
@@ -718,18 +936,42 @@ export function LiveViewerScreen({
                 <span>{formatCompactCount(stream.viewerCount)}</span>
               </div>
 
+              {opponentStream && (
+                <button
+                  type="button"
+                  onClick={() => setIsBattleOpen(true)}
+                  aria-label="Abrir batalla PK ViroArena"
+                  title="ViroArena PK"
+                  className="h-8 px-2.5 rounded-xl bg-gradient-to-r from-[#E84393] to-[#6C5CE7] border border-white/25 text-white text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer shadow-[0_0_16px_rgba(232,67,147,0.4)] whitespace-nowrap"
+                >
+                  <Swords className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">PK</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setIsPartyLobbyOpen(true)}
+                aria-label="Abrir Sala ViroParty 3x3"
+                title="ViroParty Multijugador 3x3"
+                className="h-8 px-2.5 rounded-xl bg-[#0F1324]/80 hover:bg-[#6C5CE7]/35 backdrop-blur-xl border border-[#00B4D8]/45 text-white text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-[0_0_12px_rgba(0,180,216,0.28)] whitespace-nowrap"
+              >
+                <Users className="w-3.5 h-3.5 text-[#00B4D8]" />
+                <span className="hidden sm:inline">Party</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => setMultiplayerSplit((v) => !v)}
-                aria-label="Modo Multijugador"
-                title="Modo Multijugador (Pantalla dividida)"
+                aria-label="Vista dividida"
+                title="Pantalla dividida (Co-Host)"
                 className={`w-8 h-8 rounded-xl backdrop-blur-xl border flex items-center justify-center cursor-pointer transition-colors ${
                   multiplayerSplit
                     ? 'bg-gradient-to-tr from-[#00B4D8] to-[#6C5CE7] border-white/40 text-white'
                     : 'bg-[#0F1324]/75 hover:bg-white/15 border-white/15 text-white'
                 }`}
               >
-                <Users className="w-4 h-4" />
+                <UserPlus className="w-4 h-4" />
               </button>
 
               <button
@@ -781,6 +1023,13 @@ export function LiveViewerScreen({
               </button>
             )}
           </div>
+
+          {/* PARTE 3: Banner Oficial ViroArena */}
+          <ViroArenaCountdownBanner
+            initialSeconds={300}
+            onOpenBattle={opponentStream ? () => setIsBattleOpen(true) : undefined}
+            compact
+          />
         </div>
 
         {/* PARTE 3: Large-Screen Floating VIP Notification Animation */}
@@ -829,6 +1078,18 @@ export function LiveViewerScreen({
           </div>
         )}
 
+        {interactivePulse && (
+          <div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center">
+            <div className="absolute inset-0 bg-gradient-to-tr from-[#E84393]/20 via-[#6C5CE7]/15 to-[#00B4D8]/20 animate-pulse" />
+            <div className="relative px-5 py-3 rounded-2xl bg-[#0B0E1A]/90 backdrop-blur-2xl border border-[#E84393] shadow-[0_0_40px_rgba(232,67,147,0.65)] text-center space-y-1">
+              <p className="text-xs font-extrabold uppercase tracking-wider text-[#F9A8D4]">
+                Efecto Interactivo · {interactivePulse.giftName}
+              </p>
+              <p className="text-sm font-bold text-white">{interactivePulse.effect}</p>
+            </div>
+          </div>
+        )}
+
         {roomToast && (
           <div className="absolute top-28 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-xl bg-[#0F1324]/90 border border-[#00B4D8]/40 text-xs font-semibold text-white">
             {roomToast}
@@ -837,33 +1098,87 @@ export function LiveViewerScreen({
 
         {/* Bottom Left Real-Time Chat + Viroklipz Bottom Action Bar */}
         <div className="absolute bottom-0 inset-x-0 z-20 px-3.5 pb-[calc(0.9rem+env(safe-area-inset-bottom))] pt-4 space-y-3">
+          {/* Animated Join Toast ("👋 [Nombre] se ha unido a la fiesta") */}
+          <AnimatePresence>
+            {partyJoinToast && (
+              <motion.div
+                key={partyJoinToast}
+                initial={{ opacity: 0, x: -24, scale: 0.94 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                transition={{ duration: 0.28 }}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-gradient-to-r from-[#E84393]/85 via-[#6C5CE7]/85 to-[#00B4D8]/85 backdrop-blur-xl border border-white/25 text-xs font-extrabold text-white shadow-[0_0_20px_rgba(232,67,147,0.45)]"
+              >
+                <span>{partyJoinToast}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Left Floating Live Chat Feed */}
           <div className="max-w-sm max-h-44 overflow-y-auto no-scrollbar space-y-2 pr-8">
-            {messages.map((msg) =>
-              msg.kind === 'gift' ? (
-                <div
-                  key={msg.id}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
-                >
-                  <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
-                  <FanLevelBadge level={msg.fanLevel || 1} compact />
-                  <p className="leading-snug">
-                    <span className="font-bold mr-1">{msg.username}</span>
-                    <span>{msg.text}</span>
-                  </p>
-                </div>
-              ) : msg.kind === 'like' ? (
-                <div key={msg.id} className="flex items-center gap-2 text-xs">
-                  <span className="w-6 h-6 rounded-full bg-[#E84393]/25 backdrop-blur-sm flex items-center justify-center shrink-0">
-                    <Heart className="w-3 h-3 text-[#E84393] fill-[#E84393]" />
-                  </span>
-                  <p className="text-[12.5px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-snug flex items-center flex-wrap gap-1.5">
-                    <FanLevelBadge level={msg.fanLevel || 1} compact />
-                    <span className="font-semibold text-[#00B4D8]">{msg.username}</span>
-                    <span>{msg.text}</span>
-                  </p>
-                </div>
-              ) : (
+            {messages.map((msg) => {
+              const rowIsTop1 = Boolean(
+                msg.isTop1 || (top1ChatUid && msg.authorId === top1ChatUid),
+              );
+              if (msg.kind === 'join') {
+                return (
+                  <div
+                    key={msg.id}
+                    className="inline-flex items-center gap-2 px-3 py-1 rounded-2xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
+                  >
+                    <FanLevelBadge
+                      level={msg.fanLevel || 1}
+                      isTop1={rowIsTop1}
+                      compact
+                    />
+                    <span className="font-semibold text-[#CCF4FE]">{msg.text}</span>
+                  </div>
+                );
+              }
+              if (msg.kind === 'gift') {
+                return (
+                  <div
+                    key={msg.id}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
+                  >
+                    <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
+                    <FanLevelBadge
+                      level={msg.fanLevel || 1}
+                      isTop1={rowIsTop1}
+                      compact
+                    />
+                    <p className="leading-snug">
+                      {msg.text.startsWith('¡') ? (
+                        <span className="font-semibold text-[#F9A8D4]">{msg.text}</span>
+                      ) : (
+                        <>
+                          <span className="font-bold mr-1">{msg.username}</span>
+                          <span>{msg.text}</span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                );
+              }
+              if (msg.kind === 'like') {
+                return (
+                  <div key={msg.id} className="flex items-center gap-2 text-xs">
+                    <span className="w-6 h-6 rounded-full bg-[#E84393]/25 backdrop-blur-sm flex items-center justify-center shrink-0">
+                      <Heart className="w-3 h-3 text-[#E84393] fill-[#E84393]" />
+                    </span>
+                    <p className="text-[12.5px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-snug flex items-center flex-wrap gap-1.5">
+                      <FanLevelBadge
+                        level={msg.fanLevel || 1}
+                        isTop1={rowIsTop1}
+                        compact
+                      />
+                      <span className="font-semibold text-[#00B4D8]">{msg.username}</span>
+                      <span>{msg.text}</span>
+                    </p>
+                  </div>
+                );
+              }
+              return (
                 <div key={msg.id} className="flex items-start gap-2">
                   <AvatarImg
                     src={msg.avatarUrl || ''}
@@ -873,7 +1188,11 @@ export function LiveViewerScreen({
                   />
                   <div className="min-w-0 flex-1 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <FanLevelBadge level={msg.fanLevel || 1} compact />
+                      <FanLevelBadge
+                        level={msg.fanLevel || 1}
+                        isTop1={rowIsTop1}
+                        compact
+                      />
                       <p className="text-[11px] font-semibold text-[#00B4D8] leading-tight">
                         {msg.username}
                       </p>
@@ -883,8 +1202,8 @@ export function LiveViewerScreen({
                     </p>
                   </div>
                 </div>
-              ),
-            )}
+              );
+            })}
           </div>
 
           {/* Floating Hearts */}
@@ -1036,52 +1355,38 @@ export function LiveViewerScreen({
             </div>
           )}
 
-          {/* Viroklipz Gift Picker Drawer */}
-          {isGiftDrawerOpen && (
-            <div className="p-3.5 rounded-3xl bg-[#0D101D]/95 backdrop-blur-2xl border border-[#00B4D8]/45 shadow-[0_0_32px_rgba(0,180,216,0.28)] space-y-2.5">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <Gift className="w-3.5 h-3.5 text-[#E84393]" />
-                  Enviar Regalo Viroklipz
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setIsGiftDrawerOpen(false)}
-                  className="text-zinc-400 hover:text-white cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {LIVE_GIFTS_CATALOG.map((gift) => {
-                  const linkedFavorite = audienceFavorites.find(
-                    (f) =>
-                      f.giftId.toLowerCase() === gift.id.toLowerCase() ||
-                      f.giftName.toLowerCase() === gift.name.toLowerCase(),
-                  );
-                  return (
-                    <button
-                      key={gift.id}
-                      type="button"
-                      onClick={() => void handleSendGift(gift)}
-                      className={`p-2.5 rounded-2xl bg-gradient-to-tr ${gift.accent} text-white text-left hover:brightness-110 transition-all cursor-pointer shadow`}
-                    >
-                      <p className="text-xs font-bold truncate">{gift.name}</p>
-                      <p className="text-[10px] text-white/90 font-semibold mt-0.5 inline-flex items-center gap-1">
-                        <Coins className="w-3 h-3" />
-                        {gift.coins} monedas
-                      </p>
-                      {linkedFavorite && (
-                        <p className="text-[10px] text-white font-bold mt-1 truncate bg-black/25 rounded-lg px-1.5 py-0.5">
-                          ★ {linkedFavorite.action}
-                        </p>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+          {/* Catálogo de Regalos (Bottom Sheet) */}
+          <GiftCatalogSheet
+            isOpen={isGiftDrawerOpen}
+            targetLabel={`Regalar a @${stream.creator.username}`}
+            initialTab="populares"
+            coins={currentUser?.coins ?? 0}
+            freeRoses={currentUser?.freeRoses ?? 0}
+            userFanLevel={viewerFanLevel}
+            audienceFavorites={audienceFavorites}
+            sending={sendingGift}
+            onClose={() => setIsGiftDrawerOpen(false)}
+            onSendGift={(gift) => void handleSendGift(gift)}
+            onOpenRecharge={() => {
+              setIsGiftDrawerOpen(false);
+              setMissingGiftForRecharge(null);
+              setPendingGiftAfterRecharge(null);
+              setIsRechargeOpen(true);
+            }}
+          />
+
+          {/* Insignia Lv.X visible junto al nombre del usuario espectador */}
+          <div className="flex items-center justify-between gap-2 px-1">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-[#0F1324]/75 backdrop-blur-md border border-white/12 text-[11px] text-white min-w-0">
+              <span className="font-semibold text-zinc-200 truncate max-w-[160px]">
+                {currentUser?.displayName || currentUser?.username || 'Invitado'}
+              </span>
+              <FanLevelBadge level={viewerFanLevel} compact />
             </div>
-          )}
+            <span className="text-[10px] font-semibold text-zinc-300 truncate max-w-[160px]">
+              {fanClubName}
+            </span>
+          </div>
 
           {/* Bottom Bar: Comment input + Favoritos + Regalo + Share2 + Heart */}
           <form onSubmit={(e) => void handleSendChat(e)} className="flex items-center gap-2">
@@ -1157,6 +1462,118 @@ export function LiveViewerScreen({
           </form>
         </div>
       </div>
+
+      {/* Modal de Primera Recarga (VexPay) */}
+      <FirstRechargeModal
+        isOpen={isRechargeOpen}
+        currentUser={currentUser}
+        missingGiftName={missingGiftForRecharge}
+        onClose={() => {
+          setIsRechargeOpen(false);
+          setMissingGiftForRecharge(null);
+        }}
+        onRequestSignIn={onRequestSignIn}
+        onSuccess={({ coinsCredited, bonusRoses }) => {
+          showRoomNotice(
+            bonusRoses > 0
+              ? `+${coinsCredited} monedas y ${bonusRoses} Rosas de regalo acreditadas.`
+              : `+${coinsCredited} monedas acreditadas vía VexPay.`,
+          );
+          if (pendingGiftAfterRecharge) {
+            const pending = pendingGiftAfterRecharge;
+            setPendingGiftAfterRecharge(null);
+            window.setTimeout(() => {
+              void handleSendGift(pending);
+            }, 350);
+          }
+        }}
+      />
+
+      {/* ViroArena PK Battle */}
+      {opponentStream && (
+        <LiveBattleScreen
+          isOpen={isBattleOpen}
+          hostStreamId={stream.streamId}
+          creator1={{
+            uid: stream.creator.uid,
+            username: stream.creator.username,
+            displayName: stream.creator.displayName,
+            avatarUrl: stream.creator.avatarUrl,
+            previewUrl: stream.previewImageUrl,
+            streamUrl: stream.videoUrl,
+          }}
+          creator2={{
+            uid: opponentStream.creator.uid,
+            username: opponentStream.creator.username,
+            displayName: opponentStream.creator.displayName,
+            avatarUrl: opponentStream.creator.avatarUrl,
+            previewUrl: opponentStream.previewImageUrl,
+            streamUrl: opponentStream.videoUrl,
+          }}
+          currentUser={currentUser}
+          onClose={() => setIsBattleOpen(false)}
+          onRequestSignIn={onRequestSignIn}
+        />
+      )}
+
+      {/* ViroParty Multijugador 3x3 Lobby */}
+      <MultiGuestLobbyScreen
+        isOpen={isPartyLobbyOpen}
+        liveId={stream.streamId || `showcase-${stream.creator.uid}`}
+        isFirestoreLive={Boolean(stream.isFirestoreLive && stream.streamId)}
+        isHost={isOwnStream}
+        host={{
+          uid: stream.creator.uid,
+          username: stream.creator.username,
+          displayName: stream.creator.displayName,
+          avatarUrl: stream.creator.avatarUrl,
+          previewImageUrl: stream.previewImageUrl,
+          videoUrl: stream.videoUrl,
+          fanLevel: hostFanLevel,
+        }}
+        currentUser={currentUser}
+        liveMessages={firestoreMessages}
+        onOpenBattle={
+          opponentStream
+            ? () => {
+                setIsPartyLobbyOpen(false);
+                setIsBattleOpen(true);
+              }
+            : undefined
+        }
+        onLocalJoinMessage={(displayName) => {
+          triggerPartyJoinToast(`👋 ${displayName} se ha unido a la fiesta`);
+          if (!stream.isFirestoreLive) {
+            setLocalMessages((prev) =>
+              [
+                ...prev,
+                {
+                  id: `join-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  authorId: currentUser?.uid,
+                  username: displayName,
+                  avatarUrl: currentUser?.avatarUrl,
+                  fanLevel: viewerFanLevel,
+                  isTop1: viewerFanLevel >= 15,
+                  text: `👋 ${displayName} se ha unido a la fiesta`,
+                  kind: 'join' as const,
+                },
+              ].slice(-45),
+            );
+          }
+        }}
+        onClose={() => setIsPartyLobbyOpen(false)}
+        onRequestSignIn={() => {
+          setIsPartyLobbyOpen(false);
+          onRequestSignIn();
+        }}
+      />
+
+      {/* Animación a Pantalla Completa (3s, > 500 monedas) sin interrumpir audio del Live */}
+      <FullScreenGiftAnimationOverlay
+        event={fullscreenGiftEvent}
+        durationMs={3000}
+        onComplete={handleCompleteFullscreenGift}
+      />
     </div>
   );
 }

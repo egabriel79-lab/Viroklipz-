@@ -7,8 +7,6 @@ enum AdminSection {
   dashboard,
   users,
   moderation,
-  finance,
-  settings,
 }
 
 class AdminLayout extends StatelessWidget {
@@ -35,7 +33,7 @@ class AdminLayout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isWide = MediaQuery.of(context).size.width >= 1024;
+    final isWide = MediaQuery.of(context).size.width >= 960;
 
     return Scaffold(
       backgroundColor: AdminColors.background,
@@ -66,26 +64,175 @@ class AdminLayout extends StatelessWidget {
               ),
             ),
           Expanded(
-            child: Column(
-              children: [
-                _TopBar(
-                  showMenuButton: !isWide,
-                  adminUser: adminUser,
-                  searchController: searchController,
-                  onSearchChanged: onSearchChanged,
-                  onSignOut: onSignOut,
-                ),
-                Expanded(
-                  child: Container(
-                    color: AdminColors.background,
-                    child: body,
-                  ),
-                ),
-              ],
+            child: Scaffold(
+              backgroundColor: AdminColors.background,
+              appBar: _buildTopAppBar(
+                context: context,
+                showMenuButton: !isWide,
+              ),
+              body: body,
             ),
           ),
         ],
       ),
+    );
+  }
+
+  PreferredSizeWidget _buildTopAppBar({
+    required BuildContext context,
+    required bool showMenuButton,
+  }) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final showAdminDetails = screenWidth >= 760;
+    final initial = adminUser.displayName.isNotEmpty
+        ? adminUser.displayName[0].toUpperCase()
+        : 'A';
+
+    return AppBar(
+      toolbarHeight: 74,
+      automaticallyImplyLeading: false,
+      backgroundColor: AdminColors.sidebar,
+      shape: const Border(
+        bottom: BorderSide(color: AdminColors.border, width: 1),
+      ),
+      titleSpacing: 20,
+      title: Row(
+        children: [
+          if (showMenuButton) ...[
+            Builder(
+              builder: (ctx) => IconButton(
+                onPressed: () => Scaffold.of(ctx).openDrawer(),
+                icon: const Icon(
+                  Icons.menu_rounded,
+                  color: AdminColors.textPrimary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: TextField(
+                controller: searchController,
+                onChanged: onSearchChanged,
+                style: const TextStyle(
+                  color: AdminColors.textPrimary,
+                  fontSize: 13.5,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Buscar usuarios, correos, países o reportes...',
+                  prefixIcon: const Icon(
+                    Icons.search_rounded,
+                    size: 19,
+                    color: AdminColors.electricBlue,
+                  ),
+                  suffixIcon: searchController.text.isNotEmpty
+                      ? IconButton(
+                          onPressed: () {
+                            searchController.clear();
+                            onSearchChanged('');
+                          },
+                          icon: const Icon(Icons.close_rounded, size: 17),
+                        )
+                      : null,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 11,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: showAdminDetails ? 12 : 6,
+              vertical: 4,
+            ),
+            decoration: BoxDecoration(
+              color: AdminColors.surface,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AdminColors.border),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 16,
+                  backgroundColor: AdminColors.magenta,
+                  backgroundImage: adminUser.avatarUrl.startsWith('http')
+                      ? NetworkImage(adminUser.avatarUrl)
+                      : null,
+                  child: adminUser.avatarUrl.startsWith('http')
+                      ? null
+                      : Text(
+                          initial,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13,
+                          ),
+                        ),
+                ),
+                if (showAdminDetails) ...[
+                  const SizedBox(width: 10),
+                  Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        adminUser.displayName,
+                        style: const TextStyle(
+                          color: AdminColors.textPrimary,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        adminUser.email,
+                        style: const TextStyle(
+                          color: AdminColors.electricBlue,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(right: 20, top: 15, bottom: 15),
+          child: OutlinedButton.icon(
+            onPressed: onSignOut,
+            icon: const Icon(Icons.logout_rounded, size: 17),
+            label: const Text('Cerrar Sesión'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AdminColors.magenta,
+              side: BorderSide(
+                color: AdminColors.magenta.withValues(alpha: 0.55),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              textStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -120,30 +267,36 @@ class _SidebarContent extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  width: 38,
-                  height: 38,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(11),
+                    borderRadius: BorderRadius.circular(12),
                     gradient: const LinearGradient(
-                      colors: [AdminColors.electricBlue, AdminColors.purple],
+                      colors: [AdminColors.magenta, AdminColors.electricBlue],
                     ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AdminColors.magenta.withValues(alpha: 0.35),
+                        blurRadius: 14,
+                      ),
+                    ],
                   ),
                   child: const Icon(
                     Icons.play_arrow_rounded,
                     color: Colors.white,
-                    size: 24,
+                    size: 26,
                   ),
                 ),
                 const SizedBox(width: 12),
-                Column(
+                const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
+                  children: [
                     Text(
                       'Viroklipz',
                       style: TextStyle(
                         color: AdminColors.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
                     Text(
@@ -183,18 +336,6 @@ class _SidebarContent extends StatelessWidget {
                   selected: currentSection == AdminSection.moderation,
                   onTap: () => onSelectSection(AdminSection.moderation),
                 ),
-                _NavTile(
-                  icon: Icons.account_balance_wallet_rounded,
-                  label: 'Finanzas',
-                  selected: currentSection == AdminSection.finance,
-                  onTap: () => onSelectSection(AdminSection.finance),
-                ),
-                _NavTile(
-                  icon: Icons.settings_rounded,
-                  label: 'Ajustes',
-                  selected: currentSection == AdminSection.settings,
-                  onTap: () => onSelectSection(AdminSection.settings),
-                ),
               ],
             ),
           ),
@@ -206,7 +347,7 @@ class _SidebarContent extends StatelessWidget {
               child: OutlinedButton.icon(
                 onPressed: onSignOut,
                 icon: const Icon(Icons.logout_rounded, size: 17),
-                label: const Text('Cerrar sesión'),
+                label: const Text('Cerrar Sesión'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AdminColors.textSecondary,
                   side: const BorderSide(color: AdminColors.border),
@@ -255,14 +396,14 @@ class _NavTile extends StatelessWidget {
               gradient: selected
                   ? LinearGradient(
                       colors: [
-                        AdminColors.royalBlue.withValues(alpha: 0.25),
-                        AdminColors.purple.withValues(alpha: 0.25),
+                        AdminColors.magenta.withValues(alpha: 0.24),
+                        AdminColors.electricBlue.withValues(alpha: 0.2),
                       ],
                     )
                   : null,
               border: Border.all(
                 color: selected
-                    ? AdminColors.electricBlue.withValues(alpha: 0.45)
+                    ? AdminColors.magenta.withValues(alpha: 0.55)
                     : Colors.transparent,
               ),
             ),
@@ -290,9 +431,10 @@ class _NavTile extends StatelessWidget {
                 ),
                 if (badgeCount > 0)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: AdminColors.danger,
+                      color: AdminColors.magenta,
                       borderRadius: BorderRadius.circular(99),
                     ),
                     child: Text(
@@ -308,149 +450,6 @@ class _NavTile extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  final bool showMenuButton;
-  final AdminUserModel adminUser;
-  final TextEditingController searchController;
-  final ValueChanged<String> onSearchChanged;
-  final VoidCallback onSignOut;
-
-  const _TopBar({
-    required this.showMenuButton,
-    required this.adminUser,
-    required this.searchController,
-    required this.onSearchChanged,
-    required this.onSignOut,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final initial = adminUser.displayName.isNotEmpty
-        ? adminUser.displayName[0].toUpperCase()
-        : 'A';
-
-    return Container(
-      height: 74,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(
-        color: AdminColors.sidebar,
-        border: Border(
-          bottom: BorderSide(color: AdminColors.border, width: 1),
-        ),
-      ),
-      child: Row(
-        children: [
-          if (showMenuButton) ...[
-            Builder(
-              builder: (ctx) => IconButton(
-                onPressed: () => Scaffold.of(ctx).openDrawer(),
-                icon: const Icon(Icons.menu_rounded, color: AdminColors.textPrimary),
-              ),
-            ),
-            const SizedBox(width: 8),
-          ],
-          Expanded(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: TextField(
-                controller: searchController,
-                onChanged: onSearchChanged,
-                style: const TextStyle(color: AdminColors.textPrimary, fontSize: 13.5),
-                decoration: InputDecoration(
-                  hintText: 'Buscar usuarios, correos, reportes o IDs...',
-                  prefixIcon: const Icon(
-                    Icons.search_rounded,
-                    size: 19,
-                    color: AdminColors.textMuted,
-                  ),
-                  suffixIcon: searchController.text.isNotEmpty
-                      ? IconButton(
-                          onPressed: () {
-                            searchController.clear();
-                            onSearchChanged('');
-                          },
-                          icon: const Icon(Icons.close_rounded, size: 17),
-                        )
-                      : null,
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 11,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 20),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: AdminColors.surface,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AdminColors.border),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircleAvatar(
-                  radius: 17,
-                  backgroundColor: AdminColors.purple,
-                  backgroundImage: adminUser.avatarUrl.startsWith('http')
-                      ? NetworkImage(adminUser.avatarUrl)
-                      : null,
-                  child: adminUser.avatarUrl.startsWith('http')
-                      ? null
-                      : Text(
-                          initial,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                          ),
-                        ),
-                ),
-                const SizedBox(width: 10),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      adminUser.displayName,
-                      style: const TextStyle(
-                        color: AdminColors.textPrimary,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Text(
-                      'Administrador',
-                      style: TextStyle(
-                        color: AdminColors.electricBlue,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(width: 6),
-                IconButton(
-                  tooltip: 'Cerrar sesión',
-                  onPressed: onSignOut,
-                  icon: const Icon(
-                    Icons.logout_rounded,
-                    size: 17,
-                    color: AdminColors.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
