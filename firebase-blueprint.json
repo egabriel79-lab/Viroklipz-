@@ -788,6 +788,20 @@
           "type": "string",
           "maxLength": 32
         },
+        "backgroundPreset": {
+          "type": "string",
+          "enum": ["camera", "blur", "studio_magenta", "studio_blue", "studio_dark"]
+        },
+        "commentPermission": {
+          "type": "string",
+          "enum": ["all", "followers", "off"]
+        },
+        "giftsEnabled": {
+          "type": "boolean"
+        },
+        "noiseCancellation": {
+          "type": "boolean"
+        },
         "category": {
           "type": "string",
           "enum": ["general", "baile", "musica", "cocina", "deportes", "arte", "comedia", "viajes"]

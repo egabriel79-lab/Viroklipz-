@@ -194,6 +194,15 @@ export type LiveQuality = '720p' | '1080p';
 
 export type LiveVisualEffect = 'none' | 'neon_purple' | 'electric_blue' | 'magenta_glow' | 'noir';
 
+export type LiveBackgroundPreset =
+  | 'camera'
+  | 'blur'
+  | 'studio_magenta'
+  | 'studio_blue'
+  | 'studio_dark';
+
+export type LiveCommentPermission = 'all' | 'followers' | 'off';
+
 export const FAN_LEVEL_THRESHOLDS = [1, 10, 20, 30, 40, 50] as const;
 
 export type FanLevelThreshold = (typeof FAN_LEVEL_THRESHOLDS)[number];
@@ -265,6 +274,10 @@ export interface LiveStreamRecord {
   audience?: LiveAudience;
   quality?: LiveQuality;
   visualEffect?: LiveVisualEffect;
+  backgroundPreset?: LiveBackgroundPreset;
+  commentPermission?: LiveCommentPermission;
+  giftsEnabled?: boolean;
+  noiseCancellation?: boolean;
   category: ClipCategory;
   previewImageUrl: string;
   streamUrl: string;

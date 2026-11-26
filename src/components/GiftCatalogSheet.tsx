@@ -6,8 +6,18 @@ import {
   type LiveGiftCatalogItem,
 } from '../lib/liveGifts';
 import type { AudienceFavorite, GiftCategoryTab } from '../types/viroklipz';
+import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
 import { GiftVisual } from './GiftVisual';
+
+export interface GiftBattleTargetConfig {
+  selectedSlot: 'creator1' | 'creator2';
+  onSelectSlot: (slot: 'creator1' | 'creator2') => void;
+  creator1Label: string;
+  creator2Label: string;
+  creator1AvatarUrl?: string;
+  creator2AvatarUrl?: string;
+}
 
 interface GiftCatalogSheetProps {
   isOpen: boolean;
@@ -17,6 +27,7 @@ interface GiftCatalogSheetProps {
   freeRoses: number;
   userFanLevel?: number;
   audienceFavorites?: AudienceFavorite[];
+  battleTargets?: GiftBattleTargetConfig;
   sending?: boolean;
   onClose: () => void;
   onSendGift: (gift: LiveGiftCatalogItem) => void;
@@ -31,6 +42,7 @@ export function GiftCatalogSheet({
   freeRoses,
   userFanLevel = 1,
   audienceFavorites = [],
+  battleTargets,
   sending = false,
   onClose,
   onSendGift,
@@ -190,6 +202,46 @@ export function GiftCatalogSheet({
             </button>
           </div>
         </div>
+
+        {battleTargets && (
+          <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-white/[0.05] border border-white/10 shrink-0">
+            <button
+              type="button"
+              onClick={() => battleTargets.onSelectSlot('creator1')}
+              className={`min-h-[40px] px-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
+                battleTargets.selectedSlot === 'creator1'
+                  ? 'bg-gradient-to-r from-[#E84393] to-[#9B5DE5] text-white shadow-[0_0_16px_rgba(232,67,147,0.4)]'
+                  : 'text-zinc-300 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <AvatarImg
+                src={battleTargets.creator1AvatarUrl || ''}
+                alt={battleTargets.creator1Label}
+                fallbackText={battleTargets.creator1Label}
+                sizeClass="w-5 h-5"
+              />
+              <span className="truncate">{battleTargets.creator1Label}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => battleTargets.onSelectSlot('creator2')}
+              className={`min-h-[40px] px-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
+                battleTargets.selectedSlot === 'creator2'
+                  ? 'bg-gradient-to-r from-[#00B4D8] to-[#2563EB] text-white shadow-[0_0_16px_rgba(0,180,216,0.4)]'
+                  : 'text-zinc-300 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <AvatarImg
+                src={battleTargets.creator2AvatarUrl || ''}
+                alt={battleTargets.creator2Label}
+                fallbackText={battleTargets.creator2Label}
+                sizeClass="w-5 h-5"
+              />
+              <span className="truncate">{battleTargets.creator2Label}</span>
+            </button>
+          </div>
+        )}
 
         {/* Pestañas deslizables: Populares, Club de Fans, ViroArena, Nivel de Donador */}
         <div

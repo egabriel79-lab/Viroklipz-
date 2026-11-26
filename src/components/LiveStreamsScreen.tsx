@@ -14,6 +14,8 @@ import type {
   CreatorSummary,
   FanClubPerk,
   LiveAudience,
+  LiveBackgroundPreset,
+  LiveCommentPermission,
   LiveQuality,
   LiveStreamRecord,
   LiveVisualEffect,
@@ -34,6 +36,9 @@ export interface LiveStreamItem {
   audience?: LiveAudience;
   quality?: LiveQuality;
   visualEffect?: LiveVisualEffect;
+  backgroundPreset?: LiveBackgroundPreset;
+  commentPermission?: LiveCommentPermission;
+  giftsEnabled?: boolean;
   category: ClipCategory;
   viewerCount: number;
   likesCount?: number;
@@ -120,6 +125,9 @@ export function buildLiveStreamsFromCreators(
       audience: record.audience,
       quality: record.quality,
       visualEffect: record.visualEffect,
+      backgroundPreset: record.backgroundPreset,
+      commentPermission: record.commentPermission,
+      giftsEnabled: record.giftsEnabled,
       category: record.category,
       viewerCount: record.viewerCount,
       likesCount: record.likesCount,
@@ -446,6 +454,7 @@ export function LiveStreamsScreen({
         <LiveBattleScreen
           isOpen={isBattleOpen}
           hostStreamId={liveStreams[0].streamId}
+          initialViewerCount={liveStreams[0].viewerCount}
           creator1={{
             uid: liveStreams[0].creator.uid,
             username: liveStreams[0].creator.username,

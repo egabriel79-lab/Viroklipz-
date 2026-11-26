@@ -1,23 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   Check,
-  ChevronDown,
   Coins,
   Crown,
-  Eye,
   Gift,
   Heart,
   Lock,
-  Plus,
   Send,
   Share2,
-  Sparkles,
   Star,
-  Swords,
   UserPlus,
-  Users,
-  Volume2,
-  VolumeX,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -61,7 +53,6 @@ import { GiftCatalogSheet } from './GiftCatalogSheet';
 import { LiveBattleScreen } from './LiveBattleScreen';
 import type { LiveStreamItem } from './LiveStreamsScreen';
 import { MultiGuestLobbyScreen } from './MultiGuestLobbyScreen';
-import { ViroArenaCountdownBanner } from './ViroArenaCountdownBanner';
 
 interface LiveViewerScreenProps {
   stream: LiveStreamItem;
@@ -122,13 +113,12 @@ export function LiveViewerScreen({
   currentUser,
   followingIds,
   onClose,
-  onBackToList,
+  onBackToList: _onBackToList,
   onNextStream,
   onToggleFollow,
   onSelectCreatorProfile,
   onRequestSignIn,
 }: LiveViewerScreenProps) {
-  const [muted, setMuted] = useState(false);
   const [chatDraft, setChatDraft] = useState('');
   const [firestoreMessages, setFirestoreMessages] = useState<LiveStreamMessage[]>([]);
   const [localMessages, setLocalMessages] = useState<LiveChatItem[]>([]);
@@ -201,7 +191,6 @@ export function LiveViewerScreen({
   const joinToastTimerRef = useRef<number | null>(null);
   const vipTimerRef = useRef<number | null>(null);
   const giftTimerRef = useRef<number | null>(null);
-  const mutedRef = useRef(muted);
   const vipConfigRef = useRef({
     vipAlertEnabled:
       typeof stream.vipAlertEnabled === 'boolean'
@@ -216,10 +205,6 @@ export function LiveViewerScreen({
   });
 
   useEffect(() => {
-    mutedRef.current = muted;
-  }, [muted]);
-
-  useEffect(() => {
     vipConfigRef.current = {
       vipAlertEnabled,
       vipAlertDurationSec,
@@ -230,7 +215,7 @@ export function LiveViewerScreen({
   const triggerVipNotification = (banner: VipNotificationBanner) => {
     const cfg = vipConfigRef.current;
     if (!cfg.vipAlertEnabled) return;
-    if (cfg.vipAlertSound && !mutedRef.current) {
+    if (cfg.vipAlertSound) {
       audioEngine.playVipChime();
     }
     setVipBanner(banner);
@@ -316,28 +301,24 @@ export function LiveViewerScreen({
     const guestVid = guestVideoRef.current;
 
     if (!stream.videoUrl) {
-      if (!muted) {
-        audioEngine.start(stream.audioPreset);
-      } else {
-        audioEngine.stop();
-      }
+      audioEngine.start(stream.audioPreset);
     } else {
       audioEngine.stop();
       if (hostVid) {
-        hostVid.muted = muted;
+        hostVid.muted = false;
         void hostVid.play().catch(() => {});
       }
     }
 
     if (guestVid) {
-      guestVid.muted = muted;
+      guestVid.muted = false;
       void guestVid.play().catch(() => {});
     }
 
     return () => {
       audioEngine.stop();
     };
-  }, [stream, muted, multiplayerSplit]);
+  }, [stream, multiplayerSplit]);
 
   // Real-time Firestore live messages & viewer counter
   useEffect(() => {
@@ -474,10 +455,30 @@ export function LiveViewerScreen({
     }, 2200);
   };
 
+  const isFollowing = followingIds.has(stream.creator.uid);
+  const isOwnStream = Boolean(currentUser && currentUser.uid === stream.creator.uid);
+
+  const commentRestriction = useMemo(() => {
+    if (isOwnStream) return null;
+    if (stream.commentPermission === 'off') {
+      return 'El anfitrión desactivó los comentarios';
+    }
+    if (stream.commentPermission === 'followers' && !isFollowing) {
+      return 'Solo seguidores pueden comentar';
+    }
+    return null;
+  }, [isOwnStream, stream.commentPermission, isFollowing]);
+
+  const giftsPaused = !isOwnStream && stream.giftsEnabled === false;
+
   const handleSendChat = async (e: FormEvent) => {
     e.preventDefault();
     if (!currentUser) {
       onRequestSignIn();
+      return;
+    }
+    if (commentRestriction) {
+      showRoomNotice(commentRestriction);
       return;
     }
     const text = chatDraft.trim();
@@ -566,6 +567,11 @@ export function LiveViewerScreen({
   };
 
   const handleSendGift = async (gift: LiveGiftCatalogItem) => {
+    if (giftsPaused) {
+      setIsGiftDrawerOpen(false);
+      showRoomNotice('El anfitrión pausó los regalos en este LIVE');
+      return;
+    }
     if (!currentUser) {
       setIsGiftDrawerOpen(false);
       setIsFavoritesPanelOpen(false);
@@ -720,8 +726,6 @@ export function LiveViewerScreen({
     }
   };
 
-  const isFollowing = followingIds.has(stream.creator.uid);
-  const isOwnStream = Boolean(currentUser && currentUser.uid === stream.creator.uid);
   const effectClass = EFFECT_CLASSES[stream.visualEffect || 'none'] || '';
   const totalLikes = stream.isFirestoreLive ? (stream.likesCount ?? 0) : localLikes;
   const totalGifts = stream.isFirestoreLive ? (stream.giftsCount ?? 0) : localGifts;
@@ -805,15 +809,38 @@ export function LiveViewerScreen({
               autoPlay
               loop
               playsInline
-              muted={muted}
-              className={`w-full h-full object-cover ${effectClass}`}
+              muted={false}
+              className={`w-full h-full object-cover ${effectClass} ${
+                stream.backgroundPreset === 'blur' ? 'blur-[2px] scale-[1.03]' : ''
+              }`}
             />
           ) : (
             <img
               src={stream.previewImageUrl}
               alt={stream.streamTitle}
               referrerPolicy="no-referrer"
-              className={`w-full h-full object-cover animate-ken-burns ${effectClass}`}
+              className={`w-full h-full object-cover animate-ken-burns ${effectClass} ${
+                stream.backgroundPreset === 'blur' ? 'blur-[2px] scale-[1.03]' : ''
+              }`}
+            />
+          )}
+
+          {stream.backgroundPreset === 'studio_magenta' && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#E84393]/25 via-transparent to-[#6C5CE7]/25 mix-blend-screen"
+            />
+          )}
+          {stream.backgroundPreset === 'studio_blue' && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#00B4D8]/25 via-transparent to-[#2563EB]/25 mix-blend-screen"
+            />
+          )}
+          {stream.backgroundPreset === 'studio_dark' && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#090B12]/35 via-transparent to-[#090B12]/55"
             />
           )}
 
@@ -835,7 +862,7 @@ export function LiveViewerScreen({
                 autoPlay
                 loop
                 playsInline
-                muted={muted}
+                muted={false}
                 className="w-full h-full object-cover"
               />
             ) : (
@@ -864,52 +891,42 @@ export function LiveViewerScreen({
           </div>
         )}
 
-        {/* Top & Bottom Gradient Scrims */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-36 bg-gradient-to-b from-[#080A12]/80 via-[#080A12]/35 to-transparent"
-        />
+        {/* Bottom Gradient Scrim */}
         <div
           aria-hidden="true"
           className="pointer-events-none absolute inset-x-0 bottom-0 h-80 bg-gradient-to-t from-[#080A12]/95 via-[#080A12]/55 to-transparent"
         />
 
-        {/* Top Bar: Creator Info, Follow, Viewer Count, Multiplayer Toggle, Audio, Close (X) */}
-        <div className="absolute top-0 inset-x-0 z-20 px-3.5 pt-[calc(0.65rem+env(safe-area-inset-top))] space-y-2">
-          <header className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1 sm:flex-initial sm:max-w-xs flex items-center bg-[#0F1324]/75 backdrop-blur-xl border border-white/15 rounded-2xl p-1 pr-1.5 gap-2">
+        {/* NUEVA BARRA SUPERIOR LIMPIA (Estilo Viroklipz) */}
+        <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-black/80 via-black/40 to-transparent px-3.5 pt-[calc(0.65rem+env(safe-area-inset-top))] pb-5 space-y-2.5">
+          <header className="flex items-center justify-between gap-3">
+            {/* Lado Izquierdo: Avatar + Nombre + Corazón/Seguidores + Botón "+ Seguir" */}
+            <div className="min-w-0 flex items-center gap-2.5">
               <button
                 type="button"
                 onClick={() => {
                   onClose();
                   onSelectCreatorProfile(stream.creator.uid);
                 }}
-                className="flex-1 flex items-center gap-2 min-w-0 overflow-hidden text-left cursor-pointer"
+                className="flex items-center gap-2.5 min-w-0 text-left cursor-pointer group"
               >
-                <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#00B4D8] via-[#6C5CE7] to-[#E84393] shrink-0">
+                <div className="p-[2px] rounded-full bg-gradient-to-tr from-[#00B4D8] via-[#6C5CE7] to-[#E84393] shrink-0 shadow-[0_0_12px_rgba(232,67,147,0.35)]">
                   <AvatarImg
                     src={stream.creator.avatarUrl}
                     alt={stream.creator.displayName}
                     fallbackText={stream.creator.displayName}
-                    sizeClass="w-8 h-8"
+                    sizeClass="w-10 h-10"
                   />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <p className="text-xs font-bold text-white truncate leading-tight">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <p className="text-sm font-bold text-white truncate leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] group-hover:text-[#F9A8D4] transition-colors">
                       {stream.creator.displayName}
                     </p>
-                    <FanLevelBadge level={hostFanLevel} compact />
                   </div>
-                  <p className="text-[10px] text-white/85 flex items-center gap-2 tabular-nums leading-tight mt-0.5">
-                    <span className="inline-flex items-center gap-1">
-                      <Heart className="w-2.5 h-2.5 text-[#E84393] fill-[#E84393]" />
-                      {formatCompactCount(totalLikes)}
-                    </span>
-                    <span className="inline-flex items-center gap-1 text-[#00B4D8]">
-                      <Gift className="w-2.5 h-2.5" />
-                      {formatCompactCount(totalGifts)}
-                    </span>
+                  <p className="text-[11px] font-semibold text-white/85 flex items-center gap-1 tabular-nums leading-tight mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+                    <Heart className="w-3 h-3 text-[#E84393] fill-[#E84393] shrink-0" />
+                    <span>{stream.creator.followersLabel || formatCompactCount(totalLikes)}</span>
                   </p>
                 </div>
               </button>
@@ -918,118 +935,65 @@ export function LiveViewerScreen({
                 <button
                   type="button"
                   onClick={() => onToggleFollow(stream.creator.uid, stream.creator.username)}
-                  className={`min-h-[28px] px-2.5 rounded-xl text-[11px] font-bold transition-all whitespace-nowrap shrink-0 inline-flex items-center gap-1 cursor-pointer ${
+                  className={`min-h-[30px] px-3 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isFollowing
-                      ? 'bg-white/15 text-white'
-                      : 'bg-gradient-to-r from-[#6C5CE7] to-[#E84393] text-white shadow'
+                      ? 'bg-white/15 hover:bg-white/25 text-white border border-white/15'
+                      : 'bg-gradient-to-r from-[#E84393] to-[#FF2D6F] hover:brightness-110 text-white shadow-[0_0_14px_rgba(232,67,147,0.5)]'
                   }`}
                 >
-                  {!isFollowing && <Plus className="w-3 h-3 stroke-[2.5]" />}
-                  <span>{isFollowing ? 'Siguiendo' : 'Seguir'}</span>
+                  {isFollowing ? 'Siguiendo' : '+ Seguir'}
                 </button>
               )}
             </div>
 
-            <div className="flex items-center gap-1.5 shrink-0">
-              <div className="h-8 px-2.5 rounded-xl bg-[#0F1324]/75 backdrop-blur-xl border border-white/15 text-white text-xs font-semibold tabular-nums flex items-center gap-1.5">
-                <Eye className="w-3.5 h-3.5 text-[#00B4D8]" />
-                <span>{formatCompactCount(stream.viewerCount)}</span>
-              </div>
-
-              {opponentStream && (
-                <button
-                  type="button"
-                  onClick={() => setIsBattleOpen(true)}
-                  aria-label="Abrir batalla PK ViroArena"
-                  title="ViroArena PK"
-                  className="h-8 px-2.5 rounded-xl bg-gradient-to-r from-[#E84393] to-[#6C5CE7] border border-white/25 text-white text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer shadow-[0_0_16px_rgba(232,67,147,0.4)] whitespace-nowrap"
-                >
-                  <Swords className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">PK</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setIsPartyLobbyOpen(true)}
-                aria-label="Abrir Sala ViroParty 3x3"
-                title="ViroParty Multijugador 3x3"
-                className="h-8 px-2.5 rounded-xl bg-[#0F1324]/80 hover:bg-[#6C5CE7]/35 backdrop-blur-xl border border-[#00B4D8]/45 text-white text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-[0_0_12px_rgba(0,180,216,0.28)] whitespace-nowrap"
-              >
-                <Users className="w-3.5 h-3.5 text-[#00B4D8]" />
-                <span className="hidden sm:inline">Party</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMultiplayerSplit((v) => !v)}
-                aria-label="Vista dividida"
-                title="Pantalla dividida (Co-Host)"
-                className={`w-8 h-8 rounded-xl backdrop-blur-xl border flex items-center justify-center cursor-pointer transition-colors ${
-                  multiplayerSplit
-                    ? 'bg-gradient-to-tr from-[#00B4D8] to-[#6C5CE7] border-white/40 text-white'
-                    : 'bg-[#0F1324]/75 hover:bg-white/15 border-white/15 text-white'
-                }`}
-              >
-                <UserPlus className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMuted((m) => !m)}
-                aria-label={muted ? 'Activar sonido' : 'Silenciar sonido'}
-                className="w-8 h-8 rounded-xl bg-[#0F1324]/75 hover:bg-white/15 backdrop-blur-xl border border-white/15 flex items-center justify-center text-white cursor-pointer"
-              >
-                {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-              </button>
-
-              <button
-                type="button"
-                onClick={onBackToList}
-                aria-label="Ver otros creadores en vivo"
-                className="w-8 h-8 rounded-xl bg-[#0F1324]/75 hover:bg-white/15 backdrop-blur-xl border border-white/15 flex items-center justify-center text-white cursor-pointer"
-              >
-                <ChevronDown className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Cerrar Live"
-                className="w-8 h-8 rounded-xl bg-[#0F1324]/75 hover:bg-white/15 backdrop-blur-xl border border-white/15 flex items-center justify-center text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            {/* Lado Derecho: Botón "X" (cerrar) grande y claro */}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar Live"
+              className="w-11 h-11 rounded-full bg-black/40 hover:bg-black/65 backdrop-blur-md border border-white/15 flex items-center justify-center text-white shrink-0 cursor-pointer transition-colors"
+            >
+              <X className="w-6 h-6 stroke-[2.25]" />
+            </button>
           </header>
 
-          {/* Stream Title + Metadata Strip */}
-          <div className="flex items-center justify-between gap-2">
-            <div className="px-3 py-1 rounded-xl bg-[#0F1324]/65 backdrop-blur-md border border-white/10 inline-flex items-center gap-1.5 max-w-[70%]">
-              <Sparkles className="w-3 h-3 text-[#00B4D8] shrink-0" />
-              <span className="text-[11px] font-medium text-white/95 truncate">
-                {stream.streamTitle}
-              </span>
-            </div>
+          {/* ETIQUETAS DE ESTADO (Chips horizontales) */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            <button
+              type="button"
+              onClick={() => {
+                if (streamsCount > 1) {
+                  onNextStream();
+                } else {
+                  showRoomNotice('Estás viendo LIVE populares de Viroklipz');
+                }
+              }}
+              className="px-2.5 py-1 rounded-xl bg-black/55 hover:bg-black/75 backdrop-blur-md border border-white/12 text-[11px] font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer transition-colors"
+            >
+              🔥 LIVE populares
+            </button>
 
-            {streamsCount > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setIsGiftDrawerOpen(false);
+                setIsFavoritesPanelOpen((v) => !v);
+              }}
+              className="px-2.5 py-1 rounded-xl bg-black/55 hover:bg-black/75 backdrop-blur-md border border-white/12 text-[11px] font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer transition-colors tabular-nums"
+            >
+              ⭐ {Math.min(10, Math.max(1, totalGifts))}/10 Objetivo
+            </button>
+
+            {opponentStream && (
               <button
                 type="button"
-                onClick={onNextStream}
-                className="px-3 py-1 rounded-xl bg-gradient-to-r from-[#6C5CE7]/80 to-[#00B4D8]/80 backdrop-blur-md text-[11px] font-bold text-white inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                onClick={() => setIsBattleOpen(true)}
+                className="px-2.5 py-1 rounded-xl bg-black/55 hover:bg-[#E84393]/35 backdrop-blur-md border border-[#E84393]/40 text-[11px] font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer transition-colors"
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                <span>Siguiente Live</span>
+                ⚔️ ViroArena
               </button>
             )}
           </div>
-
-          {/* PARTE 3: Banner Oficial ViroArena */}
-          <ViroArenaCountdownBanner
-            initialSeconds={300}
-            onOpenBattle={opponentStream ? () => setIsBattleOpen(true) : undefined}
-            compact
-          />
         </div>
 
         {/* PARTE 3: Large-Screen Floating VIP Notification Animation */}
@@ -1391,15 +1355,19 @@ export function LiveViewerScreen({
           {/* Bottom Bar: Comment input + Favoritos + Regalo + Share2 + Heart */}
           <form onSubmit={(e) => void handleSendChat(e)} className="flex items-center gap-2">
             <div className="flex-1 min-w-0 h-11 px-3.5 rounded-2xl bg-[#101322]/75 backdrop-blur-xl border border-white/15 flex items-center gap-2">
+              {commentRestriction && (
+                <Lock className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+              )}
               <input
                 type="text"
                 maxLength={140}
+                disabled={Boolean(commentRestriction)}
                 value={chatDraft}
                 onChange={(e) => setChatDraft(e.target.value)}
-                placeholder="Comentar en el Live..."
-                className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-white/65 focus:outline-none"
+                placeholder={commentRestriction || 'Comentar en el Live...'}
+                className="flex-1 min-w-0 bg-transparent text-sm text-white placeholder:text-white/65 disabled:opacity-70 focus:outline-none"
               />
-              {chatDraft.trim().length > 0 && (
+              {chatDraft.trim().length > 0 && !commentRestriction && (
                 <button
                   type="submit"
                   aria-label="Enviar comentario"
@@ -1431,12 +1399,20 @@ export function LiveViewerScreen({
             <button
               type="button"
               onClick={() => {
+                if (giftsPaused) {
+                  showRoomNotice('El anfitrión pausó los regalos en este LIVE');
+                  return;
+                }
                 setIsFavoritesPanelOpen(false);
                 setIsGiftDrawerOpen((v) => !v);
               }}
               aria-label="Regalo"
-              title="Enviar regalo"
-              className="h-11 px-3.5 rounded-2xl bg-gradient-to-tr from-[#00B4D8] via-[#6C5CE7] to-[#E84393] shadow-[0_0_20px_rgba(232,67,147,0.45)] flex items-center justify-center gap-1.5 text-white text-xs font-bold cursor-pointer shrink-0 hover:brightness-110 transition-all"
+              title={giftsPaused ? 'Regalos pausados por el anfitrión' : 'Enviar regalo'}
+              className={`h-11 px-3.5 rounded-2xl flex items-center justify-center gap-1.5 text-white text-xs font-bold cursor-pointer shrink-0 transition-all ${
+                giftsPaused
+                  ? 'bg-zinc-800/80 border border-white/15 opacity-60'
+                  : 'bg-gradient-to-tr from-[#00B4D8] via-[#6C5CE7] to-[#E84393] shadow-[0_0_20px_rgba(232,67,147,0.45)] hover:brightness-110'
+              }`}
             >
               <Gift className="w-4 h-4" />
               <span className="hidden sm:inline">Regalo</span>
@@ -1494,6 +1470,7 @@ export function LiveViewerScreen({
         <LiveBattleScreen
           isOpen={isBattleOpen}
           hostStreamId={stream.streamId}
+          initialViewerCount={stream.viewerCount}
           creator1={{
             uid: stream.creator.uid,
             username: stream.creator.username,

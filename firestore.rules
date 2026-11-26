@@ -421,6 +421,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id', 'hostUid', 'hostUsername', 'hostDisplayName', 'hostAvatarUrl',
           'title', 'about', 'audience', 'quality', 'visualEffect',
+          'backgroundPreset', 'commentPermission', 'giftsEnabled', 'noiseCancellation',
           'category', 'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
           'guests',
           'audioPreset', 'status', 'viewerCount', 'likesCount', 'giftsCount',
@@ -439,6 +440,10 @@ service cloud.firestore {
         && (!('audience' in data) || data.audience in ['public', 'friends'])
         && (!('quality' in data) || data.quality in ['720p', '1080p'])
         && (!('visualEffect' in data) || (data.visualEffect is string && data.visualEffect.size() <= 32))
+        && (!('backgroundPreset' in data) || data.backgroundPreset in ['camera', 'blur', 'studio_magenta', 'studio_blue', 'studio_dark'])
+        && (!('commentPermission' in data) || data.commentPermission in ['all', 'followers', 'off'])
+        && (!('giftsEnabled' in data) || data.giftsEnabled is bool)
+        && (!('noiseCancellation' in data) || data.noiseCancellation is bool)
         && data.category in ['general', 'baile', 'musica', 'cocina', 'deportes', 'arte', 'comedia', 'viajes']
         && data.previewImageUrl is string && data.previewImageUrl.size() <= 300
         && (data.previewImageUrl.size() == 0 || data.previewImageUrl.matches('^(/src/assets/.*|https://.*)$'))
@@ -1030,8 +1035,9 @@ service cloud.firestore {
               (
                 existing().hostUid == request.auth.uid
                 && incoming().diff(existing()).affectedKeys().hasOnly([
-                  'title', 'about', 'audience', 'quality', 'visualEffect', 'category',
-                  'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
+                  'title', 'about', 'audience', 'quality', 'visualEffect',
+                  'backgroundPreset', 'commentPermission', 'giftsEnabled', 'noiseCancellation',
+                  'category', 'previewImageUrl', 'streamUrl', 'guestUid', 'guestDisplayName', 'guestStreamUrl',
                   'guests',
                   'fanPerks', 'audienceFavorites', 'fanClubName', 'fanPointsPerCoin',
                   'vipAlertEnabled', 'vipAlertTitle', 'vipAlertStyle', 'vipAlertDurationSec', 'vipAlertSound',

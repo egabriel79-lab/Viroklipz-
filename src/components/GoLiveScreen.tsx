@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AudioWaveform,
   BellRing,
   Camera,
   Check,
   Crown,
-  Gift,
   Globe,
-  Heart,
+  Image as ImageIcon,
   Lock,
   Mic,
   MicOff,
@@ -14,16 +14,10 @@ import {
   RefreshCw,
   SlidersHorizontal,
   Sparkles,
-  Square,
   Star,
-  Swords,
   UserPlus,
-  Users,
-  Video,
-  VideoOff,
   X,
 } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
 import { FEATURED_CREATORS } from '../data/starterClips';
 import { audioEngine } from '../lib/audioEngine';
 import { auth } from '../lib/firebase';
@@ -38,32 +32,37 @@ import {
 } from '../lib/liveGifts';
 import {
   endFirestoreLiveStream,
+  sendLiveStreamMessage,
   startFirestoreLiveStream,
   subscribeCreatorLiveConfig,
   subscribeLiveJoinRequests,
+  subscribeLiveStreamById,
   subscribeLiveStreamMessages,
   updateFirestoreLiveGuest,
+  updateFirestoreLiveHostSettings,
 } from '../lib/viroklipzService';
 import type {
   AudienceFavorite,
   ClipCategory,
   FanClubPerk,
   LiveAudience,
+  LiveBackgroundPreset,
+  LiveCommentPermission,
   LiveQuality,
   LiveStreamMessage,
+  LiveStreamRecord,
   LiveVisualEffect,
   UserProfile,
   VipAlertStyle,
 } from '../types/viroklipz';
-import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
 import { LiveBattleScreen } from './LiveBattleScreen';
 import {
   LiveClubConfiguratorModal,
   type LiveClubConfigTab,
 } from './LiveClubConfiguratorModal';
+import { LiveHostScreen } from './LiveHostScreen';
 import { MultiGuestLobbyScreen } from './MultiGuestLobbyScreen';
-import { ViroArenaCountdownBanner } from './ViroArenaCountdownBanner';
 
 interface GoLiveScreenProps {
   currentUser: UserProfile;
@@ -120,6 +119,52 @@ const VISUAL_EFFECTS: {
   },
 ];
 
+const BACKGROUND_PRESETS: {
+  id: LiveBackgroundPreset;
+  label: string;
+  description: string;
+  previewClass: string;
+  stageOverlayClass: string;
+}[] = [
+  {
+    id: 'camera',
+    label: 'Cámara natural',
+    description: 'Fondo real sin filtros',
+    previewClass: 'from-zinc-700 to-zinc-900',
+    stageOverlayClass: '',
+  },
+  {
+    id: 'blur',
+    label: 'Desenfoque Studio',
+    description: 'Ambiente suave cinematográfico',
+    previewClass: 'from-slate-500/80 to-zinc-800',
+    stageOverlayClass: 'backdrop-blur-sm bg-black/10',
+  },
+  {
+    id: 'studio_magenta',
+    label: 'Fondo Magenta',
+    description: 'Iluminación neón Viroklipz',
+    previewClass: 'from-[#E84393] to-[#6C5CE7]',
+    stageOverlayClass:
+      'bg-gradient-to-tr from-[#E84393]/28 via-transparent to-[#6C5CE7]/28 mix-blend-screen',
+  },
+  {
+    id: 'studio_blue',
+    label: 'Fondo Azul',
+    description: 'Ambiente Azul Eléctrico',
+    previewClass: 'from-[#00B4D8] to-[#2563EB]',
+    stageOverlayClass:
+      'bg-gradient-to-tr from-[#00B4D8]/28 via-transparent to-[#2563EB]/25 mix-blend-screen',
+  },
+  {
+    id: 'studio_dark',
+    label: 'Oscuro VIP',
+    description: 'Contraste nocturno elegante',
+    previewClass: 'from-[#090B12] to-[#251A3B]',
+    stageOverlayClass: 'bg-gradient-to-b from-[#090B12]/35 via-transparent to-[#090B12]/55',
+  },
+];
+
 function formatLiveDuration(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   const mins = Math.floor(s / 60);
@@ -134,6 +179,10 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   const [audience, setAudience] = useState<LiveAudience>('public');
   const [quality, setQuality] = useState<LiveQuality>('720p');
   const [visualEffect, setVisualEffect] = useState<LiveVisualEffect>('none');
+  const [backgroundPreset, setBackgroundPreset] = useState<LiveBackgroundPreset>('camera');
+  const [commentPermission, setCommentPermission] = useState<LiveCommentPermission>('all');
+  const [giftsEnabled, setGiftsEnabled] = useState(true);
+  const [noiseCancellation, setNoiseCancellation] = useState(true);
   const [practiceMode, setPracticeMode] = useState(false);
   const [isRehearsing, setIsRehearsing] = useState(false);
   const [rehearsalLeftSec, setRehearsalLeftSec] = useState(30);
@@ -144,7 +193,7 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
-  const [isEffectsOpen, setIsEffectsOpen] = useState(false);
+  const [isBackgroundModalOpen, setIsBackgroundModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isGeneratingBio, setIsGeneratingBio] = useState(false);
   const [bioError, setBioError] = useState<string | null>(null);
@@ -155,6 +204,7 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   const [isConnecting, setIsConnecting] = useState(false);
   const [isLive, setIsLive] = useState(false);
   const [activeStreamId, setActiveStreamId] = useState<string | null>(null);
+  const [liveStreamDoc, setLiveStreamDoc] = useState<LiveStreamRecord | null>(null);
   const [liveMessages, setLiveMessages] = useState<LiveStreamMessage[]>([]);
   const [liveSeconds, setLiveSeconds] = useState(0);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -210,6 +260,11 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
     vipAlertDurationSec: DEFAULT_VIP_ALERT_CONFIG.vipAlertDurationSec,
     vipAlertSound: DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
   });
+  const noiseCancellationRef = useRef(noiseCancellation);
+
+  useEffect(() => {
+    noiseCancellationRef.current = noiseCancellation;
+  }, [noiseCancellation]);
 
   useEffect(() => {
     vipConfigRef.current = {
@@ -302,7 +357,11 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
             width: { ideal: targetWidth },
             height: { ideal: targetHeight },
           },
-          audio: true,
+          audio: {
+            noiseSuppression: noiseCancellationRef.current,
+            echoCancellation: true,
+            autoGainControl: true,
+          },
         });
         streamRef.current = stream;
         setCameraReady(true);
@@ -341,6 +400,7 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
 
   useEffect(() => {
     if (!isLive || !activeStreamId) {
+      setLiveStreamDoc(null);
       setLiveMessages([]);
       setPendingPartyRequestsCount(0);
       seenVipMsgIdsRef.current.clear();
@@ -348,6 +408,10 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
       setVipAlert(null);
       return;
     }
+    const unsubStream = subscribeLiveStreamById(activeStreamId, (docData) => {
+      setLiveStreamDoc(docData);
+    });
+
     const unsubMessages = subscribeLiveStreamMessages(activeStreamId, (msgs) => {
       setLiveMessages(msgs);
       const latestVip = [...msgs]
@@ -392,6 +456,7 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
     });
 
     return () => {
+      unsubStream();
       unsubMessages();
       unsubRequests();
     };
@@ -448,6 +513,74 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
             },
       );
     }
+  };
+
+  const handleToggleNoiseCancellation = async (enabled: boolean) => {
+    setNoiseCancellation(enabled);
+    if (streamRef.current) {
+      for (const track of streamRef.current.getAudioTracks()) {
+        try {
+          await track.applyConstraints({
+            noiseSuppression: enabled,
+            echoCancellation: true,
+          });
+        } catch {
+          // Hardware fallback ignored
+        }
+      }
+    }
+    if (isLive && activeStreamId) {
+      await updateFirestoreLiveHostSettings(activeStreamId, {
+        noiseCancellation: enabled,
+      });
+    }
+  };
+
+  const handleUpdateTitle = async (nextTitle: string) => {
+    const clean = nextTitle.trim().slice(0, 80);
+    if (!clean) return;
+    setTitle(clean);
+    if (isLive && activeStreamId) {
+      await updateFirestoreLiveHostSettings(activeStreamId, { title: clean });
+    }
+  };
+
+  const handleUpdateAbout = async (nextAbout: string) => {
+    const clean = nextAbout.trim().slice(0, 240);
+    setAbout(clean);
+    if (isLive && activeStreamId) {
+      await updateFirestoreLiveHostSettings(activeStreamId, { about: clean });
+    }
+  };
+
+  const handleUpdateCommentPermission = async (perm: LiveCommentPermission) => {
+    setCommentPermission(perm);
+    if (isLive && activeStreamId) {
+      await updateFirestoreLiveHostSettings(activeStreamId, { commentPermission: perm });
+    }
+  };
+
+  const handleToggleGiftsEnabled = async (enabled: boolean) => {
+    setGiftsEnabled(enabled);
+    if (isLive && activeStreamId) {
+      await updateFirestoreLiveHostSettings(activeStreamId, { giftsEnabled: enabled });
+    }
+  };
+
+  const handleUpdateGeneralStreamSettings = async (updates: {
+    audience?: LiveAudience;
+    quality?: LiveQuality;
+  }) => {
+    if (updates.audience) setAudience(updates.audience);
+    if (updates.quality) setQuality(updates.quality);
+    if (isLive && activeStreamId) {
+      await updateFirestoreLiveHostSettings(activeStreamId, updates);
+    }
+  };
+
+  const handleSendHostChat = async (text: string) => {
+    if (!isLive || !activeStreamId) return;
+    await sendLiveStreamMessage(activeStreamId, currentUser, text, 'chat');
   };
 
   const handleGenerateAiBio = async () => {
@@ -650,6 +783,10 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
         audience,
         quality,
         visualEffect,
+        backgroundPreset,
+        commentPermission,
+        giftsEnabled,
+        noiseCancellation,
         category,
         previewImageUrl: currentUser.avatarUrl,
         streamUrl: playbackUrl,
@@ -695,7 +832,7 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   };
 
   const openSettingsForAbout = () => {
-    setIsEffectsOpen(false);
+    setIsBackgroundModalOpen(false);
     setIsSettingsOpen(true);
     window.setTimeout(() => {
       aboutFieldRef.current?.focus();
@@ -705,27 +842,10 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   const creatorFanLevel = resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints);
   const activeFilterClass =
     VISUAL_EFFECTS.find((fx) => fx.id === visualEffect)?.filterClass || '';
+  const activeBackgroundPreset =
+    BACKGROUND_PRESETS.find((bg) => bg.id === backgroundPreset) || BACKGROUND_PRESETS[0];
   const activeVipStylePreset =
     VIP_ALERT_STYLES.find((s) => s.id === vipAlertStyle) || VIP_ALERT_STYLES[0];
-
-  const top1ChatUid = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const m of liveMessages) {
-      if (m.isTop1) return m.authorId;
-      if (m.kind === 'gift') {
-        totals.set(m.authorId, (totals.get(m.authorId) || 0) + (m.giftValue || 10));
-      }
-    }
-    let bestUid: string | null = null;
-    let bestScore = 0;
-    for (const [uid, score] of totals.entries()) {
-      if (score > bestScore) {
-        bestScore = score;
-        bestUid = uid;
-      }
-    }
-    return bestUid;
-  }, [liveMessages]);
 
   return (
     <div className="fixed inset-0 z-50 bg-[#090B12] flex flex-col overflow-hidden text-white">
@@ -737,15 +857,23 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
           }`}
         >
           {cameraReady ? (
-            <video
-              ref={previewVideoRef}
-              muted
-              playsInline
-              autoPlay
-              className={`w-full h-full object-cover transition-all duration-300 ${activeFilterClass} ${
-                facingMode === 'user' ? 'scale-x-[-1]' : ''
-              } ${camOff ? 'opacity-20' : ''}`}
-            />
+            <>
+              <video
+                ref={previewVideoRef}
+                muted
+                playsInline
+                autoPlay
+                className={`w-full h-full object-cover transition-all duration-300 ${activeFilterClass} ${
+                  backgroundPreset === 'blur' ? 'blur-[2px] scale-[1.03]' : ''
+                } ${facingMode === 'user' ? 'scale-x-[-1]' : ''} ${camOff ? 'opacity-20' : ''}`}
+              />
+              {activeBackgroundPreset.stageOverlayClass && (
+                <div
+                  aria-hidden="true"
+                  className={`pointer-events-none absolute inset-0 transition-all duration-300 ${activeBackgroundPreset.stageOverlayClass}`}
+                />
+              )}
+            </>
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-[#0B0D18] via-[#191331] to-[#090C14] flex flex-col items-center justify-center p-6 text-center gap-4">
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#6C5CE7] via-[#00B4D8] to-[#E84393] p-[2px]">
@@ -782,7 +910,7 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
           )}
         </div>
 
-        {/* PARTE 4: Split-Screen Co-Host Panel */}
+        {/* Split-Screen Co-Host Panel */}
         {multiplayerEnabled && (
           <div className="relative w-full h-1/2 md:w-1/2 md:h-full bg-gradient-to-br from-[#17122B] via-[#10162B] to-[#231024] border-t md:border-t-0 md:border-l border-[#6C5CE7]/40 flex flex-col items-center justify-center p-5 text-center">
             <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-[#00B4D8] via-[#6C5CE7] to-[#E84393] p-[2.5px] shadow-[0_0_24px_rgba(0,180,216,0.35)] mb-3">
@@ -820,518 +948,348 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
           className="pointer-events-none absolute inset-x-0 bottom-0 h-72 bg-gradient-to-t from-[#090B12] via-[#090B12]/70 to-transparent"
         />
 
-        {/* Top Bar + ViroArena Official Banner */}
-        <div className="absolute top-0 inset-x-0 z-20 px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                void stopBroadcastResources();
-                stopMediaStream();
-                onBack();
-              }}
-              className="min-h-[38px] px-3.5 rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 text-xs font-semibold text-white cursor-pointer"
-            >
-              Volver
-            </button>
-
-            {isLive ? (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-[#00B4D8]/85 via-[#6C5CE7] to-[#E84393] text-white text-xs font-bold tracking-wide shadow-[0_0_20px_rgba(232,67,147,0.45)]">
-                <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-pulse" />
-                <span>EN VIVO</span>
-                <span className="font-mono tabular-nums">{formatLiveDuration(liveSeconds)}</span>
-              </div>
-            ) : isRehearsing ? (
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#00B4D8]/20 backdrop-blur-md border border-[#00B4D8]/60 text-[#9BE8FA] text-xs font-bold">
-                <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-ping" />
-                <span>PRÁCTICA PRIVADA</span>
-                <span className="font-mono tabular-nums">{formatLiveDuration(rehearsalLeftSec)}</span>
-              </div>
-            ) : (
-              <div className="px-3 py-1.5 rounded-xl bg-[#0F1220]/75 backdrop-blur-md border border-[#00B4D8]/35 text-xs font-semibold text-white flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#00B4D8]" />
-                <span>Studio</span>
-                <FanLevelBadge level={creatorFanLevel} compact />
-                <span className="text-[10px] text-[#00B4D8] font-bold">{quality}</span>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                void stopBroadcastResources();
-                stopMediaStream();
-                onClose();
-              }}
-              aria-label="Cerrar Live"
-              className="min-h-[38px] min-w-[38px] rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 flex items-center justify-center text-white cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <ViroArenaCountdownBanner
-            initialSeconds={300}
+        {isLive ? (
+          /* PARTE 2 & 3: Active Host Screen + Settings Sheet */
+          <LiveHostScreen
+            currentUser={currentUser}
+            streamId={activeStreamId}
+            liveStream={liveStreamDoc}
+            title={title}
+            about={about}
+            audience={audience}
+            quality={quality}
+            commentPermission={commentPermission}
+            giftsEnabled={giftsEnabled}
+            noiseCancellation={noiseCancellation}
+            vipAlertTitle={vipAlertTitle}
+            vipAlertStyle={vipAlertStyle}
+            liveSeconds={liveSeconds}
+            micMuted={micMuted}
+            multiplayerEnabled={multiplayerEnabled}
+            pendingPartyRequestsCount={pendingPartyRequestsCount}
+            partyJoinToast={partyJoinToast}
+            liveMessages={liveMessages}
+            vipAlert={vipAlert}
+            onDismissVipAlert={() => setVipAlert(null)}
+            onFlipCamera={() => setFacingMode((m) => (m === 'user' ? 'environment' : 'user'))}
+            onToggleMic={handleToggleMic}
+            onToggleMultiplayer={() => void handleToggleMultiplayer()}
+            onOpenPartyLobby={() => setIsPartyLobbyOpen(true)}
             onOpenBattle={() => setIsBattleOpen(true)}
-            compact
+            onOpenClubConfig={(tab) => setClubConfigTab(tab)}
+            onSendHostChat={handleSendHostChat}
+            onUpdateTitle={handleUpdateTitle}
+            onUpdateAbout={handleUpdateAbout}
+            onUpdateCommentPermission={handleUpdateCommentPermission}
+            onToggleGiftsEnabled={handleToggleGiftsEnabled}
+            onToggleNoiseCancellation={handleToggleNoiseCancellation}
+            onUpdateGeneralStreamSettings={handleUpdateGeneralStreamSettings}
+            onEndLive={handleEndLive}
           />
-        </div>
-
-        {/* PARTE 3: Host-Side Floating VIP Notification Banner */}
-        {vipAlert && (
-          <div className="absolute top-20 inset-x-4 z-30 flex justify-center pointer-events-none">
-            <div
-              className={`pointer-events-auto max-w-md w-full rounded-2xl p-[1.5px] bg-gradient-to-r ${activeVipStylePreset.wrapperGradient} ${activeVipStylePreset.glowShadow} animate-bounce`}
-            >
-              <div className="rounded-[15px] bg-[#0B0E1B]/95 backdrop-blur-2xl px-4 py-3 flex items-center gap-3">
-                <div
-                  className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${activeVipStylePreset.wrapperGradient} flex items-center justify-center shrink-0`}
+        ) : (
+          <>
+            {/* PARTE 1: Clean Pre-Live Top Bar */}
+            <div className="absolute top-0 inset-x-0 z-20 px-4 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void stopBroadcastResources();
+                    stopMediaStream();
+                    onBack();
+                  }}
+                  className="min-h-[38px] px-3.5 rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 text-xs font-semibold text-white cursor-pointer"
                 >
-                  <Crown className="w-5 h-5 text-white" />
+                  Volver
+                </button>
+
+                {isRehearsing ? (
+                  <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-[#00B4D8]/20 backdrop-blur-md border border-[#00B4D8]/60 text-[#9BE8FA] text-xs font-bold">
+                    <span className="w-2 h-2 rounded-full bg-[#00B4D8] animate-ping" />
+                    <span>PRÁCTICA PRIVADA</span>
+                    <span className="font-mono tabular-nums">{formatLiveDuration(rehearsalLeftSec)}</span>
+                  </div>
+                ) : (
+                  <div className="px-3 py-1.5 rounded-xl bg-[#0F1220]/75 backdrop-blur-md border border-[#00B4D8]/35 text-xs font-semibold text-white flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-[#00B4D8]" />
+                    <span>Studio</span>
+                    <FanLevelBadge level={creatorFanLevel} compact />
+                    <span className="text-[10px] text-[#00B4D8] font-bold">{quality}</span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    void stopBroadcastResources();
+                    stopMediaStream();
+                    onClose();
+                  }}
+                  aria-label="Cerrar Live"
+                  className="min-h-[38px] min-w-[38px] rounded-xl bg-[#0F1220]/70 hover:bg-[#171B2E] backdrop-blur-md border border-white/15 flex items-center justify-center text-white cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* PARTE 1: Bottom Pre-Live Card with Floating Toolbar [Girar cámara, Fondo, Ajustes] + "Emitir LIVE" */}
+            <div className="absolute bottom-0 inset-x-0 z-20">
+              <div className="max-w-lg mx-auto rounded-t-[28px] bg-[#101322]/78 backdrop-blur-2xl border-t border-x border-white/15 px-5 pt-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(108,92,231,0.22)] space-y-3">
+                {statusError && (
+                  <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-xs text-rose-100 leading-relaxed">
+                    {statusError}
+                  </div>
+                )}
+
+                {isRehearsing && (
+                  <div className="p-3 rounded-xl bg-[#00B4D8]/15 border border-[#00B4D8]/40 flex items-center justify-between gap-3 text-xs">
+                    <span className="text-[#BCEEFF] font-medium">
+                      Modo Práctica activo ({rehearsalLeftSec}s). Nadie puede verte aún.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsRehearsing(false)}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer shrink-0"
+                    >
+                      Detener
+                    </button>
+                  </div>
+                )}
+
+                {/* Category Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                  {LIVE_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setCategory(cat.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-all ${
+                        category === cat.id
+                          ? 'bg-gradient-to-r from-[#6C5CE7] to-[#E84393] text-white shadow'
+                          : 'bg-white/10 text-zinc-300 hover:text-white'
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-extrabold uppercase tracking-wider text-[#00B4D8]">
-                    {vipAlertTitle || DEFAULT_VIP_ALERT_CONFIG.vipAlertTitle}
-                  </p>
-                  <p className="text-sm font-bold text-white leading-snug">
-                    ¡{vipAlert.viewerName} ha enviado {vipAlert.giftName}!
-                  </p>
-                  <p className="text-xs font-semibold text-[#F9A8D4] mt-0.5">
-                    Debes hacer: {vipAlert.action}
+
+                {/* Title Input + Acerca de mí Quick Button */}
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <label htmlFor="live-stream-title" className="sr-only">
+                      Título de la transmisión
+                    </label>
+                    <input
+                      id="live-stream-title"
+                      type="text"
+                      maxLength={80}
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder="Bienvenidos a mi Live"
+                      className="w-full min-h-[46px] px-4 rounded-2xl bg-white/10 border border-white/15 focus:border-[#00B4D8] text-sm text-white placeholder:text-zinc-400 focus:outline-none"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={openSettingsForAbout}
+                    className={`min-h-[46px] px-3.5 rounded-2xl border text-xs font-semibold whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer transition-colors ${
+                      about.trim()
+                        ? 'bg-[#6C5CE7]/30 border-[#8B7CF6] text-white'
+                        : 'bg-white/10 hover:bg-white/15 border-white/15 text-zinc-200'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#00B4D8]" />
+                    <span>Acerca de mí</span>
+                  </button>
+                </div>
+
+                {/* Floating Bottom Pre-Live Toolbar (Girar cámara, Fondo, Ajustes) right before Emitir LIVE */}
+                <div className="grid grid-cols-3 gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setFacingMode((m) => (m === 'user' ? 'environment' : 'user'))}
+                    aria-label="Girar cámara"
+                    className="min-h-[48px] px-2.5 py-2 rounded-2xl bg-[#161B2E]/90 hover:bg-[#1F2640] border border-white/12 flex items-center justify-center gap-2 text-xs font-semibold text-white cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className="w-4 h-4 text-[#00B4D8] shrink-0" />
+                    <span className="truncate">Girar cámara</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSettingsOpen(false);
+                      setIsBackgroundModalOpen(true);
+                    }}
+                    aria-label="Fondo y efectos"
+                    className={`min-h-[48px] px-2.5 py-2 rounded-2xl border flex items-center justify-center gap-2 text-xs font-semibold cursor-pointer transition-colors ${
+                      backgroundPreset !== 'camera' || visualEffect !== 'none'
+                        ? 'bg-[#E84393]/20 border-[#E84393]/60 text-white'
+                        : 'bg-[#161B2E]/90 hover:bg-[#1F2640] border-white/12 text-white'
+                    }`}
+                  >
+                    <ImageIcon className="w-4 h-4 text-[#E84393] shrink-0" />
+                    <span className="truncate">Fondo</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsBackgroundModalOpen(false);
+                      setIsSettingsOpen(true);
+                    }}
+                    aria-label="Ajustes de resolución y audio"
+                    className="min-h-[48px] px-2.5 py-2 rounded-2xl bg-[#161B2E]/90 hover:bg-[#1F2640] border border-white/12 flex items-center justify-center gap-2 text-xs font-semibold text-white cursor-pointer transition-colors"
+                  >
+                    <SlidersHorizontal className="w-4 h-4 text-[#00B4D8] shrink-0" />
+                    <span className="truncate">Ajustes</span>
+                  </button>
+                </div>
+
+                {/* Status summary row */}
+                <div className="flex items-center justify-between text-[11px] text-zinc-300 px-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    {audience === 'friends' ? (
+                      <Lock className="w-3 h-3 text-[#E84393]" />
+                    ) : (
+                      <Globe className="w-3 h-3 text-[#00B4D8]" />
+                    )}
+                    {audience === 'friends' ? 'Solo amigos' : 'Todo el mundo'} · {quality}
+                    {noiseCancellation ? ' · Voz limpia' : ''}
+                  </span>
+                  {practiceMode && !isRehearsing && (
+                    <span className="text-[#00B4D8] font-semibold">Práctica 30s</span>
+                  )}
+                </div>
+
+                {/* Botón grande con degradado "Emitir LIVE" */}
+                <button
+                  type="button"
+                  disabled={isConnecting || !cameraReady}
+                  onClick={() => void handleStartLive()}
+                  className="w-full min-h-[54px] px-6 rounded-2xl bg-gradient-to-r from-[#00B4D8] via-[#6C5CE7] to-[#E84393] hover:brightness-110 disabled:opacity-50 text-white text-base font-extrabold tracking-wide flex items-center justify-center gap-2.5 shadow-[0_8px_28px_rgba(232,67,147,0.4)] transition-all cursor-pointer"
+                >
+                  <Radio className="w-5 h-5" />
+                  {isConnecting
+                    ? 'Conectando LIVE...'
+                    : isRehearsing
+                      ? 'Emitir LIVE ahora'
+                      : practiceMode
+                        ? 'Probar cámara 30s (Práctica)'
+                        : 'Emitir LIVE'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* PARTE 1 Modal: Paisaje / Fondo & Efectos */}
+        {isBackgroundModalOpen && !isLive && (
+          <div
+            className="fixed inset-0 z-40 bg-black/75 backdrop-blur-sm flex items-end justify-center"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Cambiar fondo del Live"
+            onClick={() => setIsBackgroundModalOpen(false)}
+          >
+            <div
+              className="w-full max-w-lg rounded-t-[28px] bg-[#0D101D] border-t border-x border-[#E84393]/40 p-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] space-y-5 max-h-[85dvh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-display text-base font-bold text-white">
+                    Fondo y Ambiente
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    Elige el fondo o filtro visual antes de emitir tu LIVE
                   </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setVipAlert(null)}
-                  aria-label="Cerrar alerta VIP"
-                  className="w-7 h-7 rounded-xl bg-white/10 hover:bg-white/20 flex items-center justify-center text-white shrink-0 cursor-pointer"
+                  onClick={() => setIsBackgroundModalOpen(false)}
+                  aria-label="Cerrar selector de fondo"
+                  className="w-9 h-9 rounded-xl bg-white/10 hover:bg-white/15 flex items-center justify-center text-white cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-            </div>
-          </div>
-        )}
 
-        {/* PARTE 1: Floating Viroklipz Right Rail (Girar cámara, Efectos, Ajustes, ViroParty, Multijugador, Mic, Cam) */}
-        <div className="absolute right-3.5 top-32 z-20 flex flex-col gap-2">
-          <button
-            type="button"
-            disabled={isLive}
-            onClick={() => setFacingMode((m) => (m === 'user' ? 'environment' : 'user'))}
-            aria-label="Girar cámara"
-            className="flex flex-col items-center gap-1 disabled:opacity-45 cursor-pointer group"
-          >
-            <span className="w-11 h-11 rounded-2xl bg-[#101424]/75 group-hover:bg-[#6C5CE7]/40 backdrop-blur-xl border border-white/15 flex items-center justify-center text-white transition-colors">
-              <RefreshCw className="w-4 h-4" />
-            </span>
-            <span className="text-[10px] font-semibold text-white/90 drop-shadow">Girar</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsEffectsOpen((v) => !v)}
-            aria-label="Efectos"
-            className="flex flex-col items-center gap-1 cursor-pointer group"
-          >
-            <span
-              className={`w-11 h-11 rounded-2xl backdrop-blur-xl border flex items-center justify-center transition-colors ${
-                visualEffect !== 'none' || isEffectsOpen
-                  ? 'bg-gradient-to-tr from-[#6C5CE7] to-[#E84393] border-white/40 text-white shadow-[0_0_16px_rgba(108,92,231,0.5)]'
-                  : 'bg-[#101424]/75 group-hover:bg-[#6C5CE7]/40 border-white/15 text-white'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" />
-            </span>
-            <span className="text-[10px] font-semibold text-white/90 drop-shadow">Efectos</span>
-          </button>
-
-          {!isLive && (
-            <button
-              type="button"
-              onClick={() => {
-                setIsEffectsOpen(false);
-                setIsSettingsOpen(true);
-              }}
-              aria-label="Ajustes del Live"
-              className="flex flex-col items-center gap-1 cursor-pointer group"
-            >
-              <span className="w-11 h-11 rounded-2xl bg-[#101424]/75 group-hover:bg-[#00B4D8]/35 backdrop-blur-xl border border-white/15 flex items-center justify-center text-white transition-colors">
-                <SlidersHorizontal className="w-4 h-4" />
-              </span>
-              <span className="text-[10px] font-semibold text-white/90 drop-shadow">Ajustes</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              setIsEffectsOpen(false);
-              setClubConfigTab('fan_level');
-            }}
-            aria-label="Configurar Nivel de Fan, Favoritos y Alerta VIP"
-            className="flex flex-col items-center gap-1 cursor-pointer group"
-          >
-            <span className="w-11 h-11 rounded-2xl bg-[#101424]/75 group-hover:bg-[#E84393]/35 backdrop-blur-xl border border-[#E84393]/45 flex items-center justify-center text-[#F9A8D4] transition-colors shadow-[0_0_16px_rgba(232,67,147,0.28)]">
-              <Crown className="w-4 h-4" />
-            </span>
-            <span className="text-[10px] font-semibold text-white/90 drop-shadow">Club VIP</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsPartyLobbyOpen(true)}
-            aria-label="Abrir Lobby Multijugador ViroParty"
-            className="relative flex flex-col items-center gap-1 cursor-pointer group"
-          >
-            <span className="w-11 h-11 rounded-2xl bg-[#101424]/80 group-hover:bg-[#6C5CE7]/45 backdrop-blur-xl border border-[#00B4D8]/50 flex items-center justify-center text-[#00B4D8] transition-colors shadow-[0_0_16px_rgba(0,180,216,0.3)]">
-              <Users className="w-4 h-4" />
-            </span>
-            {pendingPartyRequestsCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E84393] text-white text-[10px] font-black flex items-center justify-center shadow-[0_0_10px_rgba(232,67,147,0.75)]">
-                {pendingPartyRequestsCount}
-              </span>
-            )}
-            <span className="text-[10px] font-semibold text-white/90 drop-shadow">ViroParty</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void handleToggleMultiplayer()}
-            aria-label="Modo Dúo Dividido"
-            className="flex flex-col items-center gap-1 cursor-pointer group"
-          >
-            <span
-              className={`w-11 h-11 rounded-2xl backdrop-blur-xl border flex items-center justify-center transition-colors ${
-                multiplayerEnabled
-                  ? 'bg-gradient-to-tr from-[#00B4D8] to-[#6C5CE7] border-white/40 text-white shadow-[0_0_16px_rgba(0,180,216,0.45)]'
-                  : 'bg-[#101424]/75 group-hover:bg-[#00B4D8]/35 border-white/15 text-white'
-              }`}
-            >
-              <UserPlus className="w-4 h-4" />
-            </span>
-            <span className="text-[10px] font-semibold text-white/90 drop-shadow">Dúo</span>
-          </button>
-
-          {isLive && (
-            <button
-              type="button"
-              onClick={() => setIsBattleOpen(true)}
-              aria-label="Batalla PK ViroArena"
-              className="flex flex-col items-center gap-1 cursor-pointer group"
-            >
-              <span className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#E84393] to-[#6C5CE7] border border-white/35 flex items-center justify-center text-white shadow-[0_0_18px_rgba(232,67,147,0.45)]">
-                <Swords className="w-4 h-4" />
-              </span>
-              <span className="text-[10px] font-semibold text-white/90 drop-shadow">PK Arena</span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            onClick={handleToggleMic}
-            aria-label={micMuted ? 'Activar micrófono' : 'Silenciar micrófono'}
-            className={`w-11 h-11 rounded-2xl backdrop-blur-xl border flex items-center justify-center cursor-pointer ${
-              micMuted
-                ? 'bg-[#E84393]/90 border-[#E84393] text-white'
-                : 'bg-[#101424]/75 hover:bg-white/15 border-white/15 text-white'
-            }`}
-          >
-            {micMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleToggleCam}
-            aria-label={camOff ? 'Encender cámara' : 'Apagar cámara'}
-            className={`w-11 h-11 rounded-2xl backdrop-blur-xl border flex items-center justify-center cursor-pointer ${
-              camOff
-                ? 'bg-[#E84393]/90 border-[#E84393] text-white'
-                : 'bg-[#101424]/75 hover:bg-white/15 border-white/15 text-white'
-            }`}
-          >
-            {camOff ? <VideoOff className="w-4 h-4" /> : <Video className="w-4 h-4" />}
-          </button>
-        </div>
-
-        {/* Floating Visual Effects Bar */}
-        {isEffectsOpen && (
-          <div className="absolute right-16 top-28 z-30 w-60 p-3 rounded-2xl bg-[#111424]/90 backdrop-blur-2xl border border-[#6C5CE7]/40 shadow-2xl space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-white">Efectos de estudio</span>
-              <button
-                type="button"
-                onClick={() => setIsEffectsOpen(false)}
-                className="text-zinc-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 gap-1.5">
-              {VISUAL_EFFECTS.map((fx) => {
-                const selected = visualEffect === fx.id;
-                return (
-                  <button
-                    key={fx.id}
-                    type="button"
-                    onClick={() => setVisualEffect(fx.id)}
-                    className={`w-full px-2.5 py-2 rounded-xl flex items-center justify-between text-xs font-semibold transition-colors cursor-pointer ${
-                      selected
-                        ? 'bg-gradient-to-r from-[#6C5CE7]/40 to-[#E84393]/40 border border-[#8B7CF6] text-white'
-                        : 'bg-white/5 hover:bg-white/10 text-zinc-200 border border-transparent'
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span
-                        className={`w-3.5 h-3.5 rounded-full bg-gradient-to-tr ${fx.swatchClass}`}
-                      />
-                      {fx.label}
-                    </span>
-                    {selected && <Check className="w-3.5 h-3.5 text-[#00B4D8]" />}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Bottom Glassmorphism Panel (PARTE 1) OR Active Live Chat Overlay */}
-        <div className="absolute bottom-0 inset-x-0 z-20">
-          {isLive ? (
-            <div className="px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-4 max-w-md mx-auto space-y-3">
-              <AnimatePresence>
-                {partyJoinToast && (
-                  <motion.div
-                    key={partyJoinToast}
-                    initial={{ opacity: 0, x: -24, scale: 0.94 }}
-                    animate={{ opacity: 1, x: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -8, scale: 0.96 }}
-                    transition={{ duration: 0.28 }}
-                    className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-gradient-to-r from-[#E84393]/85 via-[#6C5CE7]/85 to-[#00B4D8]/85 backdrop-blur-xl border border-white/25 text-xs font-extrabold text-white shadow-[0_0_20px_rgba(232,67,147,0.45)]"
-                  >
-                    <span>{partyJoinToast}</span>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {liveMessages.length > 0 && (
-                <div className="max-h-40 overflow-y-auto no-scrollbar space-y-1.5">
-                  {liveMessages.map((msg) => {
-                    const rowIsTop1 = Boolean(
-                      msg.isTop1 || (top1ChatUid && msg.authorId === top1ChatUid),
-                    );
-                    if (msg.kind === 'join') {
-                      return (
-                        <div
-                          key={msg.id}
-                          className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
-                        >
-                          <FanLevelBadge
-                            level={msg.senderFanLevel || 1}
-                            isTop1={rowIsTop1}
-                            compact
-                          />
-                          <span className="font-semibold text-[#CCF4FE]">{msg.text}</span>
-                        </div>
-                      );
-                    }
-                    if (msg.kind === 'gift') {
-                      return (
-                        <div
-                          key={msg.id}
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
-                        >
-                          <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
-                          <FanLevelBadge
-                            level={msg.senderFanLevel || 1}
-                            isTop1={rowIsTop1}
-                            compact
-                          />
-                          <span>
-                            <strong className="mr-1">{msg.authorDisplayName}</strong>
-                            {msg.text}
-                          </span>
-                        </div>
-                      );
-                    }
-                    if (msg.kind === 'like') {
-                      return (
-                        <div key={msg.id} className="flex items-center gap-2 text-xs">
-                          <Heart className="w-3.5 h-3.5 text-[#E84393] fill-[#E84393] shrink-0" />
-                          <p className="text-white/90 drop-shadow flex items-center flex-wrap gap-1">
-                            <FanLevelBadge
-                              level={msg.senderFanLevel || 1}
-                              isTop1={rowIsTop1}
-                              compact
-                            />
-                            <span className="font-semibold">{msg.authorDisplayName}</span>
-                            <span>{msg.text}</span>
-                          </p>
-                        </div>
-                      );
-                    }
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                  Paisaje / Fondo
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                  {BACKGROUND_PRESETS.map((bg) => {
+                    const selected = backgroundPreset === bg.id;
                     return (
-                      <div key={msg.id} className="flex items-start gap-2">
-                        <AvatarImg
-                          src={msg.authorAvatarUrl}
-                          alt={msg.authorDisplayName}
-                          fallbackText={msg.authorDisplayName}
-                          sizeClass="w-5 h-5 mt-0.5"
-                        />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <FanLevelBadge
-                              level={msg.senderFanLevel || 1}
-                              isTop1={rowIsTop1}
-                              compact
-                            />
-                            <span className="text-xs font-semibold text-[#00B4D8]">
-                              {msg.authorDisplayName}
-                            </span>
-                          </div>
-                          <p className="text-xs text-white drop-shadow break-words">
-                            {msg.text}
-                          </p>
+                      <button
+                        key={bg.id}
+                        type="button"
+                        onClick={() => setBackgroundPreset(bg.id)}
+                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                          selected
+                            ? 'bg-[#E84393]/18 border-[#E84393] text-white shadow-[0_0_16px_rgba(232,67,147,0.28)]'
+                            : 'bg-white/5 border-white/10 text-zinc-200 hover:bg-white/10'
+                        }`}
+                      >
+                        <div
+                          className={`w-full h-9 rounded-xl bg-gradient-to-r ${bg.previewClass} mb-2 flex items-center justify-end p-1.5`}
+                        >
+                          {selected && <Check className="w-4 h-4 text-white drop-shadow" />}
                         </div>
-                      </div>
+                        <p className="text-xs font-bold truncate">{bg.label}</p>
+                        <p className="text-[11px] text-zinc-400 truncate">{bg.description}</p>
+                      </button>
                     );
                   })}
                 </div>
-              )}
+              </div>
 
-              <div className="p-3.5 rounded-2xl bg-[#0F1222]/80 backdrop-blur-xl border border-[#00B4D8]/35 shadow-[0_0_24px_rgba(0,180,216,0.18)] space-y-1.5">
-                <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-zinc-300">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span>@{currentUser.username}</span>
-                    <FanLevelBadge level={creatorFanLevel} compact />
-                  </span>
-                  <span className="text-[#00B4D8]">
-                    {audience === 'friends' ? 'Solo amigos' : 'Todo el mundo'} · {quality}
-                  </span>
+              <div className="space-y-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                  Efecto de color
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {VISUAL_EFFECTS.map((fx) => {
+                    const selected = visualEffect === fx.id;
+                    return (
+                      <button
+                        key={fx.id}
+                        type="button"
+                        onClick={() => setVisualEffect(fx.id)}
+                        className={`min-h-[44px] px-3 py-2 rounded-xl flex items-center justify-between text-xs font-semibold transition-colors cursor-pointer border ${
+                          selected
+                            ? 'bg-[#00B4D8]/20 border-[#00B4D8] text-white'
+                            : 'bg-white/5 hover:bg-white/10 text-zinc-200 border-white/10'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2 truncate">
+                          <span
+                            className={`w-3.5 h-3.5 rounded-full bg-gradient-to-tr shrink-0 ${fx.swatchClass}`}
+                          />
+                          <span className="truncate">{fx.label}</span>
+                        </span>
+                        {selected && <Check className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />}
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="text-sm font-bold text-white">{title}</p>
-                {about.trim() && (
-                  <p className="text-xs text-zinc-300 line-clamp-2">{about}</p>
-                )}
               </div>
 
               <button
                 type="button"
-                onClick={() => void handleEndLive()}
-                className="w-full min-h-[50px] px-6 rounded-2xl bg-gradient-to-r from-[#E84393] to-rose-600 hover:opacity-95 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+                onClick={() => setIsBackgroundModalOpen(false)}
+                className="w-full min-h-[46px] rounded-2xl bg-gradient-to-r from-[#E84393] to-[#6C5CE7] text-white text-sm font-bold cursor-pointer"
               >
-                <Square className="w-4 h-4 fill-white" />
-                Finalizar Live
+                Aplicar fondo
               </button>
             </div>
-          ) : (
-            <div className="max-w-lg mx-auto rounded-t-[28px] bg-[#101322]/75 backdrop-blur-2xl border-t border-x border-white/15 px-5 pt-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(108,92,231,0.22)] space-y-3">
-              {statusError && (
-                <div className="p-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-xs text-rose-100 leading-relaxed">
-                  {statusError}
-                </div>
-              )}
-
-              {isRehearsing && (
-                <div className="p-3 rounded-xl bg-[#00B4D8]/15 border border-[#00B4D8]/40 flex items-center justify-between gap-3 text-xs">
-                  <span className="text-[#BCEEFF] font-medium">
-                    Modo Práctica activo ({rehearsalLeftSec}s). Nadie puede verte aún.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setIsRehearsing(false)}
-                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold cursor-pointer shrink-0"
-                  >
-                    Detener
-                  </button>
-                </div>
-              )}
-
-              {/* Category Chips */}
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                {LIVE_CATEGORIES.map((cat) => (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => setCategory(cat.id)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-all ${
-                      category === cat.id
-                        ? 'bg-gradient-to-r from-[#6C5CE7] to-[#E84393] text-white shadow'
-                        : 'bg-white/10 text-zinc-300 hover:text-white'
-                    }`}
-                  >
-                    {cat.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Glassmorphism Title Input + Acerca de mí Quick Button */}
-              <div className="flex items-center gap-2">
-                <div className="flex-1 min-w-0">
-                  <label htmlFor="live-stream-title" className="sr-only">
-                    Título de la transmisión
-                  </label>
-                  <input
-                    id="live-stream-title"
-                    type="text"
-                    maxLength={80}
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Bienvenidos a mi Live"
-                    className="w-full min-h-[46px] px-4 rounded-2xl bg-white/10 border border-white/15 focus:border-[#00B4D8] text-sm text-white placeholder:text-zinc-400 focus:outline-none"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={openSettingsForAbout}
-                  className={`min-h-[46px] px-3.5 rounded-2xl border text-xs font-semibold whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    about.trim()
-                      ? 'bg-[#6C5CE7]/30 border-[#8B7CF6] text-white'
-                      : 'bg-white/10 hover:bg-white/15 border-white/15 text-zinc-200'
-                  }`}
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-[#00B4D8]" />
-                  <span>Acerca de mí</span>
-                </button>
-              </div>
-
-              {/* Status summary row */}
-              <div className="flex items-center justify-between text-[11px] text-zinc-300 px-1">
-                <span className="inline-flex items-center gap-1.5">
-                  {audience === 'friends' ? (
-                    <Lock className="w-3 h-3 text-[#E84393]" />
-                  ) : (
-                    <Globe className="w-3 h-3 text-[#00B4D8]" />
-                  )}
-                  {audience === 'friends' ? 'Solo amigos' : 'Todo el mundo'} · {quality}
-                </span>
-                {practiceMode && !isRehearsing && (
-                  <span className="text-[#00B4D8] font-semibold">
-                    Práctica de 30s activada
-                  </span>
-                )}
-              </div>
-
-              {/* Gradient Emit Button (Electric Blue -> Magenta) */}
-              <button
-                type="button"
-                disabled={isConnecting || !cameraReady}
-                onClick={() => void handleStartLive()}
-                className="w-full min-h-[52px] px-6 rounded-2xl bg-gradient-to-r from-[#00B4D8] via-[#6C5CE7] to-[#E84393] hover:brightness-110 disabled:opacity-50 text-white text-sm font-bold flex items-center justify-center gap-2.5 shadow-[0_8px_28px_rgba(232,67,147,0.35)] transition-all cursor-pointer"
-              >
-                <Radio className="w-4 h-4" />
-                {isConnecting
-                  ? 'Conectando Live...'
-                  : isRehearsing
-                    ? 'Pasar a En Vivo ahora'
-                    : practiceMode
-                      ? 'Probar cámara 30s (Modo Práctica)'
-                      : 'Iniciar Live'}
-              </button>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* PARTE 2: Dark Settings Modal Bottom Sheet */}
         {isSettingsOpen && !isLive && (
@@ -1460,10 +1418,10 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
                 )}
               </div>
 
-              {/* 4. Calidad del Live */}
-              <div className="space-y-2">
+              {/* 4. Resolución de video y Audio */}
+              <div className="space-y-3">
                 <p className="text-xs font-bold uppercase tracking-wider text-zinc-300">
-                  4. Calidad del Live
+                  4. Resolución de video y Audio
                 </p>
                 <div className="grid grid-cols-2 gap-2.5">
                   {(['720p', '1080p'] as LiveQuality[]).map((opt) => {
@@ -1484,6 +1442,48 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
                       </button>
                     );
                   })}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={handleToggleMic}
+                    className={`min-h-[46px] px-3.5 rounded-2xl border flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer ${
+                      micMuted
+                        ? 'bg-[#E84393]/20 border-[#E84393] text-white'
+                        : 'bg-white/5 border-white/10 text-zinc-200 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      {micMuted ? (
+                        <MicOff className="w-4 h-4 text-[#E84393]" />
+                      ) : (
+                        <Mic className="w-4 h-4 text-[#00B4D8]" />
+                      )}
+                      {micMuted ? 'Micrófono silenciado' : 'Micrófono activo'}
+                    </span>
+                    <span className="text-[10px] font-bold text-zinc-300">
+                      {micMuted ? 'OFF' : 'ON'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleNoiseCancellation(!noiseCancellation)}
+                    className={`min-h-[46px] px-3.5 rounded-2xl border flex items-center justify-between gap-2 text-xs font-semibold cursor-pointer ${
+                      noiseCancellation
+                        ? 'bg-[#00B4D8]/15 border-[#00B4D8]/60 text-white'
+                        : 'bg-white/5 border-white/10 text-zinc-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2">
+                      <AudioWaveform className="w-4 h-4 text-[#00B4D8]" />
+                      Eliminar ruido
+                    </span>
+                    <span className="text-[10px] font-bold text-[#00B4D8]">
+                      {noiseCancellation ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
                 </div>
               </div>
 

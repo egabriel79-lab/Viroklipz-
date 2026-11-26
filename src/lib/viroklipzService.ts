@@ -82,8 +82,10 @@ import type {
   FanClubPerk,
   GuardianAuthorizationData,
   LiveAudience,
+  LiveBackgroundPreset,
   LiveBattleGiftEvent,
   LiveBattleRecord,
+  LiveCommentPermission,
   LiveGuestRecord,
   LiveJoinRequest,
   LiveQuality,
@@ -2193,6 +2195,79 @@ export async function saveCreatorLiveConfig(
   }
 }
 
+function mapLiveStreamDoc(id: string, data: Record<string, unknown>): LiveStreamRecord {
+  const rawAudience = String(data.audience || 'public');
+  const rawQuality = String(data.quality || '720p');
+  const rawEffect = String(data.visualEffect || 'none');
+  const rawBg = String(data.backgroundPreset || 'camera');
+  const rawCommentPerm = String(data.commentPermission || 'all');
+
+  const backgroundPreset: LiveBackgroundPreset = (
+    ['camera', 'blur', 'studio_magenta', 'studio_blue', 'studio_dark'].includes(rawBg)
+      ? rawBg
+      : 'camera'
+  ) as LiveBackgroundPreset;
+
+  const commentPermission: LiveCommentPermission = (
+    ['all', 'followers', 'off'].includes(rawCommentPerm) ? rawCommentPerm : 'all'
+  ) as LiveCommentPermission;
+
+  return {
+    id: String(data.id || id),
+    hostUid: String(data.hostUid || ''),
+    hostUsername: String(data.hostUsername || 'creador'),
+    hostDisplayName: String(data.hostDisplayName || 'Creador'),
+    hostAvatarUrl: String(data.hostAvatarUrl || ''),
+    title: String(data.title || 'En vivo en Viroklipz'),
+    about: typeof data.about === 'string' ? data.about : '',
+    audience: rawAudience === 'friends' ? 'friends' : 'public',
+    quality: rawQuality === '1080p' ? '1080p' : '720p',
+    visualEffect: (
+      ['none', 'neon_purple', 'electric_blue', 'magenta_glow', 'noir'].includes(rawEffect)
+        ? rawEffect
+        : 'none'
+    ) as LiveVisualEffect,
+    backgroundPreset,
+    commentPermission,
+    giftsEnabled: typeof data.giftsEnabled === 'boolean' ? data.giftsEnabled : true,
+    noiseCancellation:
+      typeof data.noiseCancellation === 'boolean' ? data.noiseCancellation : false,
+    category: (data.category || 'general') as ClipCategory,
+    previewImageUrl: String(data.previewImageUrl || ''),
+    streamUrl: sanitizeMediaUrl(typeof data.streamUrl === 'string' ? data.streamUrl : ''),
+    guestUid: typeof data.guestUid === 'string' ? data.guestUid : '',
+    guestDisplayName: typeof data.guestDisplayName === 'string' ? data.guestDisplayName : '',
+    guestStreamUrl: sanitizeMediaUrl(
+      typeof data.guestStreamUrl === 'string' ? data.guestStreamUrl : '',
+    ),
+    guests: Array.isArray(data.guests)
+      ? data.guests.filter((item): item is string => typeof item === 'string').slice(0, 10)
+      : [],
+    audioPreset: (data.audioPreset || 'urban_beat') as AudioPreset,
+    status: data.status === 'ended' ? 'ended' : 'live',
+    viewerCount: Math.max(1, Number(data.viewerCount || 1)),
+    likesCount: Math.max(0, Number(data.likesCount || 0)),
+    giftsCount: Math.max(0, Number(data.giftsCount || 0)),
+    fanPerks: sanitizeFanPerksList(data.fanPerks),
+    audienceFavorites: sanitizeAudienceFavoritesList(data.audienceFavorites),
+    fanClubName: sanitizeFanClubName(data.fanClubName),
+    fanPointsPerCoin: sanitizeFanPointsPerCoin(data.fanPointsPerCoin),
+    vipAlertEnabled:
+      typeof data.vipAlertEnabled === 'boolean'
+        ? data.vipAlertEnabled
+        : DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
+    vipAlertTitle: sanitizeVipAlertTitle(data.vipAlertTitle),
+    vipAlertStyle: sanitizeVipAlertStyle(data.vipAlertStyle),
+    vipAlertDurationSec: sanitizeVipAlertDuration(data.vipAlertDurationSec),
+    vipAlertSound:
+      typeof data.vipAlertSound === 'boolean'
+        ? data.vipAlertSound
+        : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
+    startedAtMs: toMillis(data.startedAt),
+    updatedAtMs: toMillis(data.updatedAt),
+  };
+}
+
 export function subscribeActiveLiveStreams(
   onData: (streams: LiveStreamRecord[]) => void,
 ): Unsubscribe {
@@ -2200,66 +2275,34 @@ export function subscribeActiveLiveStreams(
   return onSnapshot(
     q,
     (snapshot) => {
-      const items: LiveStreamRecord[] = snapshot.docs.map((d) => {
-        const data = d.data();
-        const rawAudience = String(data.audience || 'public');
-        const rawQuality = String(data.quality || '720p');
-        const rawEffect = String(data.visualEffect || 'none');
-        return {
-          id: String(data.id || d.id),
-          hostUid: String(data.hostUid || ''),
-          hostUsername: String(data.hostUsername || 'creador'),
-          hostDisplayName: String(data.hostDisplayName || 'Creador'),
-          hostAvatarUrl: String(data.hostAvatarUrl || ''),
-          title: String(data.title || 'En vivo en Viroklipz'),
-          about: typeof data.about === 'string' ? data.about : '',
-          audience: rawAudience === 'friends' ? 'friends' : 'public',
-          quality: rawQuality === '1080p' ? '1080p' : '720p',
-          visualEffect: (
-            ['none', 'neon_purple', 'electric_blue', 'magenta_glow', 'noir'].includes(rawEffect)
-              ? rawEffect
-              : 'none'
-          ) as LiveVisualEffect,
-          category: (data.category || 'general') as ClipCategory,
-          previewImageUrl: String(data.previewImageUrl || ''),
-          streamUrl: sanitizeMediaUrl(typeof data.streamUrl === 'string' ? data.streamUrl : ''),
-          guestUid: typeof data.guestUid === 'string' ? data.guestUid : '',
-          guestDisplayName: typeof data.guestDisplayName === 'string' ? data.guestDisplayName : '',
-          guestStreamUrl: sanitizeMediaUrl(
-            typeof data.guestStreamUrl === 'string' ? data.guestStreamUrl : '',
-          ),
-          guests: Array.isArray(data.guests)
-            ? data.guests.filter((item): item is string => typeof item === 'string').slice(0, 10)
-            : [],
-          audioPreset: (data.audioPreset || 'urban_beat') as AudioPreset,
-          status: data.status === 'ended' ? 'ended' : 'live',
-          viewerCount: Math.max(1, Number(data.viewerCount || 1)),
-          likesCount: Math.max(0, Number(data.likesCount || 0)),
-          giftsCount: Math.max(0, Number(data.giftsCount || 0)),
-          fanPerks: sanitizeFanPerksList(data.fanPerks),
-          audienceFavorites: sanitizeAudienceFavoritesList(data.audienceFavorites),
-          fanClubName: sanitizeFanClubName(data.fanClubName),
-          fanPointsPerCoin: sanitizeFanPointsPerCoin(data.fanPointsPerCoin),
-          vipAlertEnabled:
-            typeof data.vipAlertEnabled === 'boolean'
-              ? data.vipAlertEnabled
-              : DEFAULT_VIP_ALERT_CONFIG.vipAlertEnabled,
-          vipAlertTitle: sanitizeVipAlertTitle(data.vipAlertTitle),
-          vipAlertStyle: sanitizeVipAlertStyle(data.vipAlertStyle),
-          vipAlertDurationSec: sanitizeVipAlertDuration(data.vipAlertDurationSec),
-          vipAlertSound:
-            typeof data.vipAlertSound === 'boolean'
-              ? data.vipAlertSound
-              : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
-          startedAtMs: toMillis(data.startedAt),
-          updatedAtMs: toMillis(data.updatedAt),
-        };
-      });
+      const items: LiveStreamRecord[] = snapshot.docs.map((d) =>
+        mapLiveStreamDoc(d.id, d.data() as Record<string, unknown>),
+      );
       items.sort((a, b) => b.startedAtMs - a.startedAtMs);
       onData(items);
     },
     (err) => {
       handleFirestoreError(err, OperationType.LIST, 'liveStreams');
+    },
+  );
+}
+
+export function subscribeLiveStreamById(
+  streamId: string,
+  onData: (stream: LiveStreamRecord | null) => void,
+): Unsubscribe {
+  const path = `liveStreams/${streamId}`;
+  return onSnapshot(
+    doc(db, 'liveStreams', streamId),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(null);
+        return;
+      }
+      onData(mapLiveStreamDoc(snap.id, snap.data() as Record<string, unknown>));
+    },
+    (err) => {
+      console.warn('Error suscribiendo estado del LIVE:', path, err);
     },
   );
 }
@@ -2272,6 +2315,10 @@ export async function startFirestoreLiveStream(
     audience?: LiveAudience;
     quality?: LiveQuality;
     visualEffect?: LiveVisualEffect;
+    backgroundPreset?: LiveBackgroundPreset;
+    commentPermission?: LiveCommentPermission;
+    giftsEnabled?: boolean;
+    noiseCancellation?: boolean;
     category?: ClipCategory;
     previewImageUrl?: string;
     streamUrl?: string;
@@ -2296,6 +2343,11 @@ export async function startFirestoreLiveStream(
   const cleanAudience: LiveAudience = input.audience === 'friends' ? 'friends' : 'public';
   const cleanQuality: LiveQuality = input.quality === '1080p' ? '1080p' : '720p';
   const cleanEffect: LiveVisualEffect = input.visualEffect || 'none';
+  const cleanBackgroundPreset: LiveBackgroundPreset = input.backgroundPreset || 'camera';
+  const cleanCommentPermission: LiveCommentPermission = input.commentPermission || 'all';
+  const giftsEnabled = typeof input.giftsEnabled === 'boolean' ? input.giftsEnabled : true;
+  const noiseCancellation =
+    typeof input.noiseCancellation === 'boolean' ? input.noiseCancellation : false;
   const cleanCategory: ClipCategory =
     input.category && ALLOWED_CATEGORIES.includes(input.category) ? input.category : 'general';
   const cleanStreamUrl = sanitizeMediaUrl(input.streamUrl);
@@ -2331,6 +2383,10 @@ export async function startFirestoreLiveStream(
       audience: cleanAudience,
       quality: cleanQuality,
       visualEffect: cleanEffect,
+      backgroundPreset: cleanBackgroundPreset,
+      commentPermission: cleanCommentPermission,
+      giftsEnabled,
+      noiseCancellation,
       category: cleanCategory,
       previewImageUrl: sanitizeLivePreviewUrl(input.previewImageUrl),
       streamUrl: cleanStreamUrl,
@@ -2359,6 +2415,61 @@ export async function startFirestoreLiveStream(
     handleFirestoreError(err, OperationType.CREATE, path);
   }
   return streamId;
+}
+
+export async function updateFirestoreLiveHostSettings(
+  streamId: string,
+  updates: {
+    title?: string;
+    about?: string;
+    audience?: LiveAudience;
+    quality?: LiveQuality;
+    visualEffect?: LiveVisualEffect;
+    backgroundPreset?: LiveBackgroundPreset;
+    commentPermission?: LiveCommentPermission;
+    giftsEnabled?: boolean;
+    noiseCancellation?: boolean;
+  },
+): Promise<void> {
+  if (!streamId) return;
+  const path = `liveStreams/${streamId}`;
+  const payload: Record<string, unknown> = {
+    updatedAt: serverTimestamp(),
+  };
+  if (typeof updates.title === 'string') {
+    const clean = updates.title.trim().slice(0, 80);
+    if (clean) payload.title = clean;
+  }
+  if (typeof updates.about === 'string') {
+    payload.about = updates.about.trim().slice(0, 240);
+  }
+  if (updates.audience === 'public' || updates.audience === 'friends') {
+    payload.audience = updates.audience;
+  }
+  if (updates.quality === '720p' || updates.quality === '1080p') {
+    payload.quality = updates.quality;
+  }
+  if (typeof updates.visualEffect === 'string') {
+    payload.visualEffect = updates.visualEffect.slice(0, 32);
+  }
+  if (updates.backgroundPreset) {
+    payload.backgroundPreset = updates.backgroundPreset;
+  }
+  if (updates.commentPermission) {
+    payload.commentPermission = updates.commentPermission;
+  }
+  if (typeof updates.giftsEnabled === 'boolean') {
+    payload.giftsEnabled = updates.giftsEnabled;
+  }
+  if (typeof updates.noiseCancellation === 'boolean') {
+    payload.noiseCancellation = updates.noiseCancellation;
+  }
+
+  try {
+    await updateDoc(doc(db, 'liveStreams', streamId), payload);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
 }
 
 export async function updateFirestoreLiveStreamPerksAndFavorites(
