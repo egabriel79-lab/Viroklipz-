@@ -13,7 +13,6 @@ import {
   Bookmark,
   Camera,
   Check,
-  ChevronRight,
   Clock,
   Copy,
   Eye,
@@ -31,6 +30,7 @@ import {
   Play,
   Plus,
   QrCode,
+  Repeat,
   Sparkles,
   Star,
   Sun,
@@ -42,6 +42,9 @@ import {
   X,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
+import { evaluateClipDistribution } from '../lib/distributionAlgorithm';
+import { ClipThumbnail } from './ClipThumbnail';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 import viroklipzBanner3d from '../assets/images/viroklipz_banner_3d_1795446833092.jpg';
 import { deleteClipMediaBlob, listOfflineClipIds } from '../lib/mediaStorage';
 import {
@@ -53,7 +56,6 @@ import {
   MAX_NOTE_LEN,
   MAX_PERSONAL_LINK_LEN,
   MAX_PHONE_LEN,
-  MAX_PRONOUNS_LEN,
   MAX_USERNAME_LEN,
   sanitizePersonalLink,
   validatePrivateInfoPayload,
@@ -156,13 +158,11 @@ const BIO_QUICK_IDEAS = [
   'Arte y diseño',
 ] as const;
 
-const PRONOUN_OPTIONS = [
-  '',
-  'Él / Lo',
-  'Ella / La',
-  'Elle / Le',
-  'Prefiero no decir',
-] as const;
+function normalizeSavedPersonalLink(raw?: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed || /^https?:\/\/?$/i.test(trimmed)) return '';
+  return trimmed;
+}
 
 const TOP_COUNTRIES = [
   { name: 'Venezuela', flag: '🇻🇪', percent: 42, barClass: 'bg-[#6C5CE7]' },
@@ -728,7 +728,6 @@ export function ProfileView({
   const { isDark, toggleTheme } = useTheme();
   // Dedicated full-screen sub-screens matching reference captures
   const [studioOpen, setStudioOpen] = useState(false);
-  const [editDescriptionOpen, setEditDescriptionOpen] = useState(false);
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [momentModalOpen, setMomentModalOpen] = useState(false);
   const [momentDraft, setMomentDraft] = useState('');
@@ -766,7 +765,6 @@ export function ProfileView({
   const [bioPartNotice, setBioPartNotice] = useState<string | null>(null);
   const bioTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [personalLinkDraft, setPersonalLinkDraft] = useState('');
-  const [pronounsDraft, setPronounsDraft] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSavedNotice, setProfileSavedNotice] = useState(false);
@@ -821,14 +819,13 @@ export function ProfileView({
   }, [currentUser?.uid]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || editProfileOpen) return;
     setUsernameDraft(currentUser.username);
-    setDisplayNameDraft(currentUser.displayName);
-    setBioDraft(currentUser.bio || DEFAULT_BIO_COPY);
+    setDisplayNameDraft(currentUser.displayName || '');
+    setBioDraft(currentUser.bio || '');
     setBioColorDraft(currentUser.bioColor || '#FFFFFF');
-    setPersonalLinkDraft(currentUser.personalLink || '');
-    setPronounsDraft(currentUser.pronouns || '');
-  }, [currentUser]);
+    setPersonalLinkDraft(normalizeSavedPersonalLink(currentUser.personalLink));
+  }, [currentUser, editProfileOpen]);
 
   useEffect(() => {
     if (!privateInfo) return;
@@ -884,10 +881,13 @@ export function ProfileView({
 
   const syncDraftsFromCurrentUser = () => {
     if (!currentUser) return;
-    const initialBio = currentUser.bio || DEFAULT_BIO_COPY;
-    const loadedSpans = normalizeBioSpans(loadBioSpans(currentUser.uid), initialBio.length);
+    const initialBio = currentUser.bio || '';
+    const loadedSpans = normalizeBioSpans(
+      loadBioSpans(currentUser.uid),
+      (initialBio || DEFAULT_BIO_COPY).length,
+    );
     setUsernameDraft(currentUser.username);
-    setDisplayNameDraft(currentUser.displayName);
+    setDisplayNameDraft(currentUser.displayName || '');
     setBioDraft(initialBio);
     setBioColorDraft(currentUser.bioColor || '#FFFFFF');
     setBioSpans(loadedSpans);
@@ -896,8 +896,7 @@ export function ProfileView({
     setBioSelectionDraft(null);
     setBioPartNotice(null);
     setVideoBorderDraft(videoBorderId);
-    setPersonalLinkDraft(currentUser.personalLink || '');
-    setPronounsDraft(currentUser.pronouns || '');
+    setPersonalLinkDraft(normalizeSavedPersonalLink(currentUser.personalLink));
     setProfileError(null);
     setProfileSavedNotice(false);
   };
@@ -917,12 +916,6 @@ export function ProfileView({
     }
     setDrawerSection(target);
     setDrawerOpen(true);
-  };
-
-  const openEditDescription = () => {
-    syncDraftsFromCurrentUser();
-    setDrawerOpen(false);
-    setEditDescriptionOpen(true);
   };
 
   const openEditProfile = () => {
@@ -971,9 +964,10 @@ export function ProfileView({
         bio: viewedCreator.bio || DEFAULT_BIO_COPY,
         bioColor: '#FFFFFF',
         personalLink: '',
-        pronouns: '',
         avatarUrl: viewedCreator.avatarUrl,
         followersLabel: viewedCreator.followersLabel,
+        followersCount: viewedCreator.followersCount,
+        isVerified: viewedCreator.isVerified,
       }
     : {
         uid: currentUser!.uid,
@@ -981,17 +975,20 @@ export function ProfileView({
         displayName: currentUser!.displayName,
         bio: currentUser!.bio.trim() ? currentUser!.bio : DEFAULT_BIO_COPY,
         bioColor: currentUser!.bioColor || '#FFFFFF',
-        personalLink: currentUser!.personalLink || '',
-        pronouns: currentUser!.pronouns || '',
+        personalLink: normalizeSavedPersonalLink(currentUser!.personalLink),
         avatarUrl: currentUser!.avatarUrl,
         followersLabel: null,
+        followersCount: currentUser!.followersCount,
+        isVerified: currentUser!.isVerified,
       };
 
   const profileFanLevel = isViewingExternalCreator
     ? resolveFanLevel(viewedCreator?.fanLevel)
     : resolveFanLevel(currentUser?.fanLevel, currentUser?.fanPoints, streak?.currentStreak);
 
-  const createdClips = allClips.filter((c) => c.authorId === profileData.uid);
+  const createdClips = allClips.filter(
+    (c) => c.authorId === profileData.uid && (!c.mediaType || c.mediaType === 'video'),
+  );
   const offlineClips = allClips.filter(
     (c) => offlineIds.includes(c.id) || c.hasLocalMedia,
   );
@@ -1014,8 +1011,16 @@ export function ProfileView({
     (n) => n.uid !== currentUser?.uid && n.note.trim().length > 0,
   );
 
-  const handleSaveDescription = async () => {
+  const handleSaveEditProfile = async (e?: FormEvent) => {
+    if (e) e.preventDefault();
     if (!currentUser) return;
+    const trimmedLink = personalLinkDraft.trim();
+    const cleanedLink = trimmedLink ? sanitizePersonalLink(trimmedLink) : '';
+    if (trimmedLink && !cleanedLink) {
+      setProfileError('Ingresa un enlace válido (ej. mi-sitio-web.com).');
+      return;
+    }
+
     const trimmedBio = bioDraft.trim();
     const leadingSpaces = bioDraft.length - bioDraft.trimStart().length;
     const shiftedSpans = normalizeBioSpans(
@@ -1028,50 +1033,11 @@ export function ProfileView({
     );
 
     const check = validateProfilePayload({
-      username: currentUser.username,
-      displayName: currentUser.displayName,
-      bio: bioDraft,
-      bioColor: bioColorDraft,
-    });
-    if (!check.ok) {
-      setProfileError(check.message);
-      return;
-    }
-    setSavingProfile(true);
-    setProfileError(null);
-    try {
-      await onUpdateProfile({
-        username: currentUser.username,
-        displayName: currentUser.displayName,
-        bio: trimmedBio,
-        bioColor: bioColorDraft,
-      });
-      setBioSpans(shiftedSpans);
-      saveBioSpans(currentUser.uid, shiftedSpans);
-      setVideoBorderId(videoBorderDraft);
-      try {
-        localStorage.setItem(getVideoBorderStorageKey(currentUser.uid), videoBorderDraft);
-      } catch {
-        // Ignore storage quota errors
-      }
-      setEditDescriptionOpen(false);
-    } catch {
-      setProfileError('No pudimos guardar tu descripción.');
-    } finally {
-      setSavingProfile(false);
-    }
-  };
-
-  const handleSaveEditProfile = async (e?: FormEvent) => {
-    if (e) e.preventDefault();
-    if (!currentUser) return;
-    const check = validateProfilePayload({
       username: usernameDraft,
       displayName: displayNameDraft,
       bio: bioDraft,
       bioColor: bioColorDraft,
-      personalLink: personalLinkDraft,
-      pronouns: pronounsDraft,
+      personalLink: cleanedLink,
     });
     if (!check.ok) {
       setProfileError(check.message);
@@ -1084,11 +1050,18 @@ export function ProfileView({
       await onUpdateProfile({
         username: usernameDraft.trim().toLowerCase(),
         displayName: displayNameDraft.trim(),
-        bio: bioDraft.trim(),
+        bio: trimmedBio,
         bioColor: bioColorDraft,
-        personalLink: sanitizePersonalLink(personalLinkDraft),
-        pronouns: pronounsDraft.trim(),
+        personalLink: cleanedLink,
       });
+      setBioSpans(shiftedSpans);
+      saveBioSpans(currentUser.uid, shiftedSpans);
+      setVideoBorderId(videoBorderDraft);
+      try {
+        localStorage.setItem(getVideoBorderStorageKey(currentUser.uid), videoBorderDraft);
+      } catch {
+        // Ignore storage quota errors
+      }
       setProfileSavedNotice(true);
       setEditProfileOpen(false);
     } catch {
@@ -1576,15 +1549,13 @@ export function ProfileView({
           {/* 3. Nombre y @usuario debajo del avatar */}
           <div className="space-y-0.5 px-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-950 dark:text-white truncate">
-                {profileData.displayName}
-              </h1>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-950 dark:text-white truncate">
+                  {profileData.displayName}
+                </h1>
+                {isAccountVerified(profileData) && <VerifiedBadge size={16} />}
+              </div>
               <FanLevelBadge level={profileFanLevel} />
-              {profileData.pronouns && (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  · {profileData.pronouns}
-                </span>
-              )}
             </div>
             <p className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
               @{profileData.username}
@@ -1628,7 +1599,7 @@ export function ProfileView({
             )}
           </div>
 
-          {/* 5. Acciones de perfil: solo el dueño ve "Viroklipz Studio" y "Editar descripción" */}
+          {/* 5. Acciones de perfil: solo el dueño ve "Viroklipz Studio" */}
           {isViewingExternalCreator ? (
             <div className="flex flex-wrap items-center gap-2.5">
               <button
@@ -1664,22 +1635,14 @@ export function ProfileView({
               )}
             </div>
           ) : currentUser ? (
-            <div className="grid grid-cols-2 gap-2.5 max-w-md">
+            <div className="flex justify-center sm:justify-start">
               <button
                 type="button"
                 onClick={openStudioScreen}
-                className="min-h-[44px] px-3.5 py-2 rounded-xl bg-white dark:bg-[#161926] hover:bg-zinc-100 dark:hover:bg-white/10 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shadow-xs dark:shadow-none"
+                className="w-full max-w-xs min-h-[44px] px-5 py-2.5 rounded-xl bg-white dark:bg-[#161926] hover:bg-zinc-100 dark:hover:bg-white/10 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-white text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shadow-xs dark:shadow-none"
               >
                 <Star className="w-4 h-4 text-[#6C5CE7] fill-[#6C5CE7] shrink-0" />
                 <span>Viroklipz Studio</span>
-              </button>
-              <button
-                type="button"
-                onClick={openEditDescription}
-                className="min-h-[44px] px-3.5 py-2 rounded-xl bg-white dark:bg-[#161926] hover:bg-zinc-100 dark:hover:bg-white/10 border border-zinc-200 dark:border-white/10 text-zinc-900 dark:text-zinc-100 text-xs sm:text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap shadow-xs dark:shadow-none"
-              >
-                <Pencil className="w-4 h-4 text-cyan-600 dark:text-[#00B4D8] shrink-0" />
-                <span>Editar descripción</span>
               </button>
             </div>
           ) : null}
@@ -1748,7 +1711,7 @@ export function ProfileView({
           </section>
         )}
 
-        {/* 7. Cuadrícula de 3 columnas con bordes personalizables desde Editar descripción */}
+        {/* 7. Cuadrícula de 3 columnas con bordes personalizables desde Editar perfil */}
         <section aria-label="Videos subidos" className="space-y-3 pt-1">
           {createdClips.length === 0 ? (
             <div className="py-12 text-center bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl space-y-3">
@@ -1785,16 +1748,10 @@ export function ProfileView({
                     className="w-full text-left block cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6C5CE7]"
                   >
                     <div className="relative aspect-[3/4] bg-zinc-900 overflow-hidden">
-                      {clip.visualPreset ? (
-                        <img
-                          src={clip.visualPreset}
-                          alt={clip.caption}
-                          referrerPolicy="no-referrer"
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                        />
-                      ) : (
-                        <div className="w-full h-full bg-gradient-to-br from-zinc-800 to-zinc-950" />
-                      )}
+                      <ClipThumbnail
+                        clip={clip}
+                        className="group-hover:scale-105 transition-transform duration-300"
+                      />
                       <div
                         aria-hidden="true"
                         className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent"
@@ -1890,50 +1847,70 @@ export function ProfileView({
                 Rendimiento por Video
               </h3>
               <div className="bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl divide-y divide-zinc-200 dark:divide-white/10 overflow-hidden shadow-xs dark:shadow-none">
-                {studioPerformanceClips.map((clip) => (
-                  <button
-                    key={clip.id}
-                    type="button"
-                    onClick={() => {
-                      setStudioOpen(false);
-                      onSelectClip(clip.id);
-                    }}
-                    className="w-full p-3.5 flex items-center gap-3.5 text-left hover:bg-zinc-50 dark:hover:bg-white/[0.04] transition-colors cursor-pointer"
-                  >
-                    <div className="w-12 h-16 rounded-xl bg-zinc-200 dark:bg-zinc-900 overflow-hidden shrink-0 border border-zinc-200 dark:border-white/10">
-                      {clip.visualPreset ? (
-                        <img
-                          src={clip.visualPreset}
-                          alt={clip.caption}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center bg-zinc-200 dark:bg-zinc-800">
-                          <Play className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
-                        </div>
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
-                        {clip.caption}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-                        <span className="inline-flex items-center gap-1">
-                          <Eye className="w-3.5 h-3.5 text-cyan-600 dark:text-[#00B4D8]" />
-                          {formatCompactCount(clip.viewsCount || 0)}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Heart className="w-3.5 h-3.5 text-[#E84393]" />
-                          {formatCompactCount(clip.likesCount || 0)}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Bookmark className="w-3.5 h-3.5 text-[#6C5CE7] dark:text-[#8B7CF6]" />
-                          {formatCompactCount(clip.bookmarksCount || 0)}
-                        </span>
+                {studioPerformanceClips.map((clip) => {
+                  const dist = evaluateClipDistribution(clip);
+                  return (
+                    <button
+                      key={clip.id}
+                      type="button"
+                      onClick={() => {
+                        setStudioOpen(false);
+                        onSelectClip(clip.id);
+                      }}
+                      className="w-full p-3.5 flex items-center gap-3.5 text-left hover:bg-zinc-50 dark:hover:bg-white/[0.04] transition-colors cursor-pointer"
+                    >
+                      <div className="w-12 h-16 rounded-xl bg-zinc-200 dark:bg-zinc-900 overflow-hidden shrink-0 border border-zinc-200 dark:border-white/10">
+                        {clip.visualPreset ? (
+                          <img
+                            src={clip.visualPreset}
+                            alt={clip.caption}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-zinc-200 dark:bg-zinc-800">
+                            <Play className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </button>
-                ))}
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
+                            {clip.caption}
+                          </p>
+                          <span
+                            className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-md ${
+                              dist.inExplorePage
+                                ? 'bg-[#E84393]/15 text-[#E84393]'
+                                : dist.stopped
+                                  ? 'bg-zinc-200 dark:bg-white/10 text-zinc-500 dark:text-zinc-400'
+                                  : 'bg-[#00B4D8]/15 text-cyan-700 dark:text-[#00B4D8]'
+                            }`}
+                          >
+                            {dist.label}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
+                          <span className="inline-flex items-center gap-1">
+                            <Eye className="w-3.5 h-3.5 text-cyan-600 dark:text-[#00B4D8]" />
+                            {formatCompactCount(clip.viewsCount || 0)}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Heart className="w-3.5 h-3.5 text-[#E84393]" />
+                            {formatCompactCount(clip.likesCount || 0)}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Bookmark className="w-3.5 h-3.5 text-[#6C5CE7] dark:text-[#8B7CF6]" />
+                            {formatCompactCount(clip.bookmarksCount || 0)}
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <Repeat className="w-3.5 h-3.5 text-emerald-500" />
+                            {formatCompactCount(clip.replaysCount || 0)}
+                          </span>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </section>
 
@@ -1971,295 +1948,9 @@ export function ProfileView({
         </div>
       )}
 
-      {/* SCREEN 4: PANTALLA DE EDITAR DESCRIPCIÓN */}
-      {editDescriptionOpen && currentUser && (
-        <div className="fixed inset-0 z-50 bg-white dark:bg-[#0F111A] text-zinc-950 dark:text-white flex flex-col overflow-hidden">
-          <header className="px-4 sm:px-6 h-14 border-b border-zinc-200 dark:border-white/10 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#131622]">
-            <button
-              type="button"
-              onClick={() => setEditDescriptionOpen(false)}
-              className="min-h-[44px] px-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white transition-colors cursor-pointer"
-            >
-              Cancelar
-            </button>
-            <h2 className="font-display text-base font-bold text-zinc-950 dark:text-white">
-              Descripción
-            </h2>
-            <button
-              type="button"
-              disabled={savingProfile}
-              onClick={() => void handleSaveDescription()}
-              className="min-h-[44px] px-2 text-sm font-semibold text-[#E84393] hover:opacity-80 disabled:opacity-50 transition-opacity cursor-pointer"
-            >
-              {savingProfile ? 'Guardando...' : 'Guardar'}
-            </button>
-          </header>
-
-          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 max-w-2xl w-full mx-auto space-y-6 pb-12">
-            {profileError && (
-              <div className="p-3 rounded-xl bg-[#E84393]/10 border border-[#E84393]/30 text-xs text-[#E84393] font-medium">
-                {profileError}
-              </div>
-            )}
-
-            {/* Título: TU PRESENTACIÓN */}
-            <div className="space-y-2.5">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
-                TU PRESENTACIÓN
-              </h3>
-
-              {/* Caja de texto oscura con el texto de la biografía */}
-              <div className="relative bg-[#161926] border border-zinc-800 rounded-2xl p-4 shadow-sm">
-                <textarea
-                  ref={bioTextareaRef}
-                  rows={4}
-                  maxLength={MAX_BIO_LEN}
-                  value={bioDraft}
-                  onChange={(e) => handleBioDraftChange(e.target.value)}
-                  onSelect={syncBioTextareaSelection}
-                  onKeyUp={syncBioTextareaSelection}
-                  onMouseUp={syncBioTextareaSelection}
-                  onTouchEnd={syncBioTextareaSelection}
-                  style={{ color: resolveBioDisplayColor(bioColorDraft, true) }}
-                  placeholder="Cuéntale a la comunidad sobre ti y tus klips..."
-                  className="w-full bg-transparent text-sm leading-relaxed placeholder:text-zinc-500 focus:outline-none resize-none"
-                />
-                <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                  <span className="text-[11px] text-zinc-400">
-                    {bioColorScopeDraft === 'part'
-                      ? 'Selecciona una palabra o tramo para darle color'
-                      : 'El color seleccionado aplica a toda la descripción'}
-                  </span>
-                  <span className="font-mono text-[11px] tabular-nums text-zinc-400">
-                    {bioDraft.length}/{MAX_BIO_LEN}
-                  </span>
-                </div>
-              </div>
-
-              {/* Vista previa en tiempo real acorde al modo Claro / Oscuro */}
-              <div className="p-3.5 rounded-2xl bg-zinc-100 dark:bg-[#161926] border border-zinc-200 dark:border-white/10 space-y-1">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                  Vista previa en tu perfil
-                </span>
-                <p className="text-sm leading-relaxed whitespace-pre-line">
-                  {renderStyledBio(
-                    bioDraft || 'Tu presentación aparecerá aquí...',
-                    bioColorDraft,
-                    isDark,
-                    bioSpansDraft,
-                  )}
-                </p>
-              </div>
-            </div>
-
-            {/* Sección: Color del texto (Todo el texto vs Una parte del texto) */}
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300">
-                  Color del texto
-                </h3>
-                <div className="inline-flex rounded-xl bg-zinc-100 dark:bg-[#161926] border border-zinc-200 dark:border-white/10 p-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBioColorScopeDraft('all');
-                      setBioPartNotice(null);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
-                      bioColorScopeDraft === 'all'
-                        ? 'bg-white dark:bg-[#23273A] text-zinc-950 dark:text-white shadow-xs'
-                        : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
-                    }`}
-                  >
-                    Todo el texto
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setBioColorScopeDraft('part');
-                      setBioPartNotice(null);
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
-                      bioColorScopeDraft === 'part'
-                        ? 'bg-white dark:bg-[#23273A] text-zinc-950 dark:text-white shadow-xs'
-                        : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
-                    }`}
-                  >
-                    Una parte del texto
-                  </button>
-                </div>
-              </div>
-
-              {bioColorScopeDraft === 'part' && (
-                <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-[#161926] border border-zinc-200 dark:border-white/10 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">
-                      {bioSelectionDraft
-                        ? `Seleccionado: "${bioDraft.slice(bioSelectionDraft.start, bioSelectionDraft.end)}"`
-                        : 'Toca una palabra para seleccionarla y luego elige un color:'}
-                    </span>
-                    {bioSpansDraft.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBioSpansDraft([]);
-                          setBioPartNotice(null);
-                        }}
-                        className="text-[11px] font-semibold text-[#E84393] hover:opacity-80 cursor-pointer shrink-0"
-                      >
-                        Restablecer
-                      </button>
-                    )}
-                  </div>
-
-                  {bioDraft.trim() ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {tokenizeBioWords(bioDraft).map((tok) => {
-                        const isSelected =
-                          bioSelectionDraft &&
-                          bioSelectionDraft.start <= tok.start &&
-                          bioSelectionDraft.end >= tok.end;
-                        const matchingSpan = bioSpansDraft.find(
-                          (s) => s.start < tok.end && s.end > tok.start,
-                        );
-                        return (
-                          <button
-                            key={`${tok.start}-${tok.end}`}
-                            type="button"
-                            onClick={() => {
-                              setBioSelectionDraft({ start: tok.start, end: tok.end });
-                              setBioPartNotice(null);
-                            }}
-                            style={
-                              matchingSpan
-                                ? {
-                                    borderColor: resolveBioDisplayColor(
-                                      matchingSpan.color,
-                                      isDark,
-                                    ),
-                                  }
-                                : undefined
-                            }
-                            className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
-                              isSelected
-                                ? 'bg-[#6C5CE7] text-white border-[#6C5CE7] shadow-xs'
-                                : 'bg-white dark:bg-[#0F111A] text-zinc-800 dark:text-zinc-200 border-zinc-200 dark:border-white/15 hover:border-[#6C5CE7]'
-                            }`}
-                          >
-                            {tok.word}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-[11px] text-zinc-500">
-                      Escribe tu presentación arriba para elegir palabras individuales.
-                    </p>
-                  )}
-
-                  {bioPartNotice && (
-                    <p className="text-[11px] font-medium text-[#E84393]">
-                      {bioPartNotice}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3">
-                {BIO_TEXT_COLORS.map((swatch) => {
-                  const swatchBg = isDark ? swatch.hex : swatch.lightHex;
-                  const selected =
-                    bioColorScopeDraft === 'all'
-                      ? bioColorDraft.toUpperCase() === swatch.hex
-                      : Boolean(
-                          bioSelectionDraft &&
-                            bioSpansDraft.some(
-                              (s) =>
-                                s.start <= bioSelectionDraft.start &&
-                                s.end >= bioSelectionDraft.end &&
-                                s.color.toUpperCase() === swatch.hex,
-                            ),
-                        );
-                  return (
-                    <button
-                      key={swatch.hex}
-                      type="button"
-                      onClick={() => handleSelectBioColorSwatch(swatch.hex)}
-                      aria-label={`Color ${swatch.label}`}
-                      title={swatch.label}
-                      style={{ backgroundColor: swatchBg }}
-                      className={`w-9 h-9 rounded-full transition-transform cursor-pointer ${
-                        selected
-                          ? 'ring-2 ring-[#6C5CE7] ring-offset-2 ring-offset-white dark:ring-offset-[#0F111A] scale-110'
-                          : 'border border-zinc-300 dark:border-zinc-700 hover:scale-105'
-                      }`}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Sección: Borde de videos (acorde al tema Claro/Oscuro) */}
-            <div className="space-y-3 pt-1 border-t border-zinc-200 dark:border-white/10">
-              <div className="flex items-center justify-between gap-2 pt-3">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5">
-                  <Palette className="w-3.5 h-3.5 text-[#6C5CE7] dark:text-[#8B7CF6]" />
-                  Borde de videos
-                </h3>
-                <span className="text-[11px] font-semibold text-zinc-500 dark:text-zinc-400">
-                  {VIDEO_BORDER_OPTIONS.find((o) => o.id === videoBorderDraft)?.label ||
-                    'Blanco'}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                {VIDEO_BORDER_OPTIONS.map((opt) => {
-                  const selected = videoBorderDraft === opt.id;
-                  const swatchColor = isDark ? opt.darkSwatch : opt.lightSwatch;
-                  return (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => setVideoBorderDraft(opt.id)}
-                      aria-label={`Borde ${opt.label}`}
-                      title={opt.label}
-                      style={{ backgroundColor: swatchColor }}
-                      className={`w-9 h-9 rounded-full transition-transform cursor-pointer ${
-                        selected
-                          ? 'ring-2 ring-[#6C5CE7] ring-offset-2 ring-offset-white dark:ring-offset-[#0F111A] scale-110'
-                          : 'border border-zinc-300 dark:border-zinc-700 hover:scale-105'
-                      }`}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Sección: Ideas rápidas */}
-            <div className="space-y-3 pt-1 border-t border-zinc-200 dark:border-white/10">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-700 dark:text-zinc-300 flex items-center gap-1.5 pt-3">
-                <Sparkles className="w-3.5 h-3.5 text-[#6C5CE7] dark:text-[#8B7CF6]" />
-                Ideas rápidas
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {BIO_QUICK_IDEAS.map((idea) => (
-                  <button
-                    key={idea}
-                    type="button"
-                    onClick={() => appendQuickIdea(idea)}
-                    className="min-h-[38px] px-3.5 py-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 dark:bg-[#161926] dark:hover:bg-white/10 border border-zinc-200 dark:border-white/10 text-xs font-semibold text-zinc-800 dark:text-zinc-200 transition-colors cursor-pointer"
-                  >
-                    + {idea}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* PANTALLA DE EDITAR PERFIL */}
       {editProfileOpen && currentUser && (
-        <div className="fixed inset-0 z-50 bg-zinc-50 dark:bg-[#0F111A] text-zinc-900 dark:text-white flex flex-col overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-white text-zinc-900 flex flex-col overflow-hidden">
           <input
             ref={bannerInputRef}
             type="file"
@@ -2287,22 +1978,22 @@ export function ProfileView({
             className="hidden"
           />
 
-          <header className="px-4 sm:px-6 h-14 border-b border-zinc-200 dark:border-white/10 flex items-center justify-between gap-3 shrink-0 bg-white dark:bg-[#131622]">
+          <header className="px-4 sm:px-6 h-14 border-b border-zinc-200 flex items-center justify-between gap-3 shrink-0 bg-white">
             <button
               type="button"
               onClick={() => setEditProfileOpen(false)}
-              className="min-h-[44px] px-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white transition-colors cursor-pointer"
+              className="min-h-[44px] px-2 text-sm font-medium text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer"
             >
               Volver
             </button>
-            <h2 className="font-display text-base font-bold text-zinc-900 dark:text-white">
+            <h2 className="font-display text-base font-bold text-zinc-950">
               Editar perfil
             </h2>
             <button
               type="button"
               disabled={uploadingBanner}
               onClick={openBannerModal}
-              className="min-h-[44px] px-2 text-xs sm:text-sm font-semibold text-[#6C5CE7] dark:text-[#8B7CF6] hover:opacity-80 disabled:opacity-50 transition-opacity cursor-pointer whitespace-nowrap"
+              className="min-h-[44px] px-2 text-xs sm:text-sm font-semibold text-[#6C5CE7] hover:opacity-80 disabled:opacity-50 transition-opacity cursor-pointer whitespace-nowrap"
             >
               {uploadingBanner ? 'Subiendo...' : 'Agregar fondo'}
             </button>
@@ -2310,22 +2001,22 @@ export function ProfileView({
 
           <form
             onSubmit={(e) => void handleSaveEditProfile(e)}
-            className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 max-w-2xl w-full mx-auto space-y-6 pb-12"
+            className="flex-1 overflow-y-auto px-4 sm:px-6 py-5 max-w-2xl w-full mx-auto space-y-6 pb-12 bg-white"
           >
             {profileError && (
-              <div className="p-3 rounded-xl bg-[#E84393]/10 border border-[#E84393]/40 text-xs text-[#E84393] dark:text-[#F472B6]">
+              <div className="p-3 rounded-xl bg-rose-50 border border-[#E84393]/40 text-xs font-medium text-[#E84393]">
                 {profileError}
               </div>
             )}
 
             {profileSavedNotice && (
-              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-500/40 text-xs text-emerald-700 dark:text-emerald-300">
+              <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-500/40 text-xs font-medium text-emerald-700">
                 Perfil actualizado correctamente.
               </div>
             )}
 
             {/* Banner con botones superpuestos: Cambiar y Eliminar fondo */}
-            <div className="relative h-32 sm:h-40 rounded-2xl bg-zinc-200 dark:bg-[#161926] border border-zinc-200 dark:border-white/10 overflow-hidden flex items-center justify-center">
+            <div className="relative h-32 sm:h-40 rounded-2xl bg-zinc-100 border border-zinc-200 overflow-hidden flex items-center justify-center">
               <BannerMediaDisplay
                 items={activeBannerGallery}
                 fallbackUrl={viroklipzBanner3d}
@@ -2372,19 +2063,19 @@ export function ProfileView({
                 type="button"
                 disabled={uploadingAvatar}
                 onClick={() => avatarInputRef.current?.click()}
-                className="min-h-[38px] px-4 rounded-xl bg-white dark:bg-[#161926] hover:bg-zinc-100 dark:hover:bg-white/10 border border-zinc-200 dark:border-white/15 text-xs font-semibold text-zinc-900 dark:text-white inline-flex items-center gap-2 transition-colors cursor-pointer"
+                className="min-h-[38px] px-4 rounded-xl bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 text-xs font-semibold text-zinc-900 inline-flex items-center gap-2 transition-colors cursor-pointer"
               >
                 <Camera className="w-3.5 h-3.5 text-[#00B4D8]" />
                 {uploadingAvatar ? 'Actualizando...' : 'Cambiar foto'}
               </button>
             </div>
 
-            {/* Lista de opciones: Nombre, Nombre de usuario, URL del perfil */}
-            <div className="bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl divide-y divide-zinc-200 dark:divide-white/10 overflow-hidden shadow-xs dark:shadow-none">
-              <div className="px-4 py-3 flex items-center justify-between gap-3">
+            {/* Campos de identidad: Nombre, Nombre de usuario y URL del perfil */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-4 space-y-4 shadow-xs">
+              <div className="space-y-1.5">
                 <label
                   htmlFor="edit-profile-name"
-                  className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 w-32"
+                  className="block text-xs font-semibold text-zinc-700"
                 >
                   Nombre
                 </label>
@@ -2394,20 +2085,20 @@ export function ProfileView({
                   maxLength={MAX_DISPLAY_NAME_LEN}
                   value={displayNameDraft}
                   onChange={(e) => setDisplayNameDraft(e.target.value)}
-                  placeholder="VIROKLIPZ"
-                  className="flex-1 bg-transparent text-right text-sm font-semibold text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none"
+                  placeholder="Tu nombre visible"
+                  className="w-full min-h-[44px] bg-zinc-100 border border-zinc-200 focus:border-[#6C5CE7] focus:bg-white rounded-xl px-3.5 py-2.5 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none transition-colors"
                 />
               </div>
 
-              <div className="px-4 py-3 flex items-center justify-between gap-3">
+              <div className="space-y-1.5">
                 <label
                   htmlFor="edit-profile-username"
-                  className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 w-32"
+                  className="block text-xs font-semibold text-zinc-700"
                 >
                   Nombre de usuario
                 </label>
-                <div className="flex-1 flex items-center justify-end gap-0.5 min-w-0">
-                  <span className="text-sm text-zinc-400 dark:text-zinc-500">@</span>
+                <div className="flex items-center bg-zinc-100 border border-zinc-200 focus-within:border-[#6C5CE7] focus-within:bg-white rounded-xl px-3.5 transition-colors">
+                  <span className="text-sm font-semibold text-zinc-500 mr-1">@</span>
                   <input
                     id="edit-profile-username"
                     type="text"
@@ -2415,123 +2106,305 @@ export function ProfileView({
                     value={usernameDraft}
                     onChange={(e) => setUsernameDraft(e.target.value)}
                     placeholder="viroklipz"
-                    className="w-full max-w-[200px] bg-transparent text-right text-sm font-semibold text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none"
+                    className="w-full min-h-[44px] bg-transparent py-2.5 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none"
                   />
                 </div>
               </div>
 
-              <div className="px-4 py-3 flex items-center justify-between gap-3">
-                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0">
+              <div className="pt-1 border-t border-zinc-100 flex items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-zinc-600 shrink-0">
                   URL del perfil
                 </span>
                 <button
                   type="button"
                   onClick={() => void handleCopyUrl(editPreviewProfileUrl, 'edit')}
-                  className="min-w-0 flex items-center gap-2 text-right text-xs font-mono text-zinc-700 dark:text-zinc-300 hover:text-zinc-950 dark:hover:text-white cursor-pointer"
+                  className="min-w-0 flex items-center gap-2 text-right text-xs font-mono text-zinc-700 hover:text-zinc-950 cursor-pointer"
                 >
                   <span className="truncate max-w-[190px] sm:max-w-[280px]">
                     {editPreviewProfileUrl}
                   </span>
                   {profileUrlCopied ? (
-                    <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   ) : (
-                    <Copy className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                    <Copy className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
                   )}
                 </button>
               </div>
             </div>
 
-            {/* Sección: Información básica */}
+            {/* Sección: Información básica (Biografía y Enlace personal) */}
             <div className="space-y-2.5">
               <p className="px-1 text-xs font-semibold uppercase tracking-wider text-zinc-500">
                 Información básica
               </p>
-              <div className="bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl divide-y divide-zinc-200 dark:divide-white/10 overflow-hidden shadow-xs dark:shadow-none">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditProfileOpen(false);
-                    openEditDescription();
-                  }}
-                  className="w-full px-4 py-3.5 hover:bg-zinc-50 dark:hover:bg-white/[0.03] flex items-center justify-between gap-3 text-left transition-colors cursor-pointer"
-                >
-                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 w-28">
-                    Biografía
-                  </span>
-                  <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
-                    <span className="text-xs sm:text-sm truncate text-right">
-                      {bioDraft.trim()
-                        ? renderStyledBio(bioDraft.trim(), bioColorDraft, isDark, bioSpans)
-                        : <span className="text-zinc-500">Agregar descripción</span>}
+              <div className="bg-white border border-zinc-200 rounded-2xl p-4 space-y-5 shadow-xs">
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="edit-profile-bio"
+                      className="text-xs font-semibold text-zinc-700"
+                    >
+                      Biografía
+                    </label>
+                    <span className="text-[11px] font-mono tabular-nums text-zinc-500">
+                      {bioDraft.length} / {MAX_BIO_LEN}
                     </span>
-                    <ChevronRight className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
                   </div>
-                </button>
+                  <textarea
+                    ref={bioTextareaRef}
+                    id="edit-profile-bio"
+                    rows={3}
+                    maxLength={MAX_BIO_LEN}
+                    value={bioDraft}
+                    onChange={(e) => handleBioDraftChange(e.target.value)}
+                    onSelect={syncBioTextareaSelection}
+                    onKeyUp={syncBioTextareaSelection}
+                    onMouseUp={syncBioTextareaSelection}
+                    onTouchEnd={syncBioTextareaSelection}
+                    placeholder="Cuéntale a tu comunidad sobre ti..."
+                    className="w-full bg-zinc-100 border border-zinc-200 focus:border-[#6C5CE7] focus:bg-white rounded-xl px-3.5 py-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none resize-none transition-colors"
+                  />
 
-                <div className="px-4 py-3 flex items-center justify-between gap-3">
+                  {/* Vista previa con color aplicado */}
+                  <div
+                    className={`p-3 rounded-xl border ${
+                      isDark
+                        ? 'bg-[#161926] border-zinc-800'
+                        : 'bg-zinc-50 border-zinc-200'
+                    }`}
+                  >
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">
+                      Vista previa en tu perfil
+                    </span>
+                    <p className="text-sm leading-relaxed whitespace-pre-line">
+                      {renderStyledBio(
+                        bioDraft || 'Tu presentación aparecerá aquí...',
+                        bioColorDraft,
+                        isDark,
+                        bioSpansDraft,
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Selector de color de biografía */}
+                  <div className="space-y-2.5 pt-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                        <Palette className="w-3.5 h-3.5 text-[#6C5CE7]" />
+                        Color de la biografía
+                      </span>
+                      <div className="inline-flex rounded-xl bg-zinc-100 border border-zinc-200 p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBioColorScopeDraft('all');
+                            setBioPartNotice(null);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                            bioColorScopeDraft === 'all'
+                              ? 'bg-white text-zinc-900 shadow-xs'
+                              : 'text-zinc-600 hover:text-zinc-900'
+                          }`}
+                        >
+                          Todo el texto
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBioColorScopeDraft('part');
+                            setBioPartNotice(null);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                            bioColorScopeDraft === 'part'
+                              ? 'bg-white text-zinc-900 shadow-xs'
+                              : 'text-zinc-600 hover:text-zinc-900'
+                          }`}
+                        >
+                          Por palabras
+                        </button>
+                      </div>
+                    </div>
+
+                    {bioColorScopeDraft === 'part' && (
+                      <div className="p-2.5 rounded-xl bg-zinc-50 border border-zinc-200 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-medium text-zinc-600">
+                            {bioSelectionDraft
+                              ? `Seleccionado: "${bioDraft.slice(bioSelectionDraft.start, bioSelectionDraft.end)}"`
+                              : 'Toca una palabra para darle color:'}
+                          </span>
+                          {bioSpansDraft.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setBioSpansDraft([]);
+                                setBioPartNotice(null);
+                              }}
+                              className="text-[11px] font-semibold text-[#E84393] hover:opacity-80 cursor-pointer shrink-0"
+                            >
+                              Restablecer
+                            </button>
+                          )}
+                        </div>
+                        {bioDraft.trim() ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {tokenizeBioWords(bioDraft).map((tok) => {
+                              const isSelected =
+                                bioSelectionDraft &&
+                                bioSelectionDraft.start <= tok.start &&
+                                bioSelectionDraft.end >= tok.end;
+                              const matchingSpan = bioSpansDraft.find(
+                                (s) => s.start < tok.end && s.end > tok.start,
+                              );
+                              return (
+                                <button
+                                  key={`${tok.start}-${tok.end}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setBioSelectionDraft({ start: tok.start, end: tok.end });
+                                    setBioPartNotice(null);
+                                  }}
+                                  style={
+                                    matchingSpan
+                                      ? {
+                                          borderColor: resolveBioDisplayColor(
+                                            matchingSpan.color,
+                                            false,
+                                          ),
+                                        }
+                                      : undefined
+                                  }
+                                  className={`px-2 py-0.5 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                                    isSelected
+                                      ? 'bg-[#6C5CE7] text-white border-[#6C5CE7]'
+                                      : 'bg-white text-zinc-800 border-zinc-200 hover:border-[#6C5CE7]'
+                                  }`}
+                                >
+                                  {tok.word}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-zinc-500">
+                            Escribe tu biografía para elegir palabras individuales.
+                          </p>
+                        )}
+                        {bioPartNotice && (
+                          <p className="text-[11px] font-medium text-[#E84393]">{bioPartNotice}</p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      {BIO_TEXT_COLORS.map((swatch) => {
+                        const swatchBg = swatch.lightHex;
+                        const selected =
+                          bioColorScopeDraft === 'all'
+                            ? bioColorDraft.toUpperCase() === swatch.hex
+                            : Boolean(
+                                bioSelectionDraft &&
+                                  bioSpansDraft.some(
+                                    (s) =>
+                                      s.start <= bioSelectionDraft.start &&
+                                      s.end >= bioSelectionDraft.end &&
+                                      s.color.toUpperCase() === swatch.hex,
+                                  ),
+                              );
+                        return (
+                          <button
+                            key={swatch.hex}
+                            type="button"
+                            onClick={() => handleSelectBioColorSwatch(swatch.hex)}
+                            aria-label={`Color ${swatch.label}`}
+                            title={swatch.label}
+                            style={{ backgroundColor: swatchBg }}
+                            className={`w-8 h-8 rounded-full transition-transform cursor-pointer ${
+                              selected
+                                ? 'ring-2 ring-[#6C5CE7] ring-offset-2 ring-offset-white scale-110'
+                                : 'border border-zinc-300 hover:scale-105'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Ideas rápidas */}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {BIO_QUICK_IDEAS.map((idea) => (
+                      <button
+                        key={idea}
+                        type="button"
+                        onClick={() => appendQuickIdea(idea)}
+                        className="px-2.5 py-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 text-[11px] font-semibold text-zinc-700 transition-colors cursor-pointer"
+                      >
+                        + {idea}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Borde de videos */}
+                <div className="pt-3 border-t border-zinc-100 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold text-zinc-700">
+                      Borde de videos
+                    </span>
+                    <span className="text-[11px] font-medium text-zinc-500">
+                      {VIDEO_BORDER_OPTIONS.find((o) => o.id === videoBorderDraft)?.label || 'Blanco'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {VIDEO_BORDER_OPTIONS.map((opt) => {
+                      const selected = videoBorderDraft === opt.id;
+                      const swatchColor = opt.lightSwatch;
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => setVideoBorderDraft(opt.id)}
+                          aria-label={`Borde ${opt.label}`}
+                          title={opt.label}
+                          style={{ backgroundColor: swatchColor }}
+                          className={`w-8 h-8 rounded-full transition-transform cursor-pointer ${
+                            selected
+                              ? 'ring-2 ring-[#6C5CE7] ring-offset-2 ring-offset-white scale-110'
+                              : 'border border-zinc-300 hover:scale-105'
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
                   <label
                     htmlFor="edit-profile-link"
-                    className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 w-28"
+                    className="block text-xs font-semibold text-zinc-700"
                   >
                     Enlace personal
                   </label>
                   <input
                     id="edit-profile-link"
                     type="text"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    autoCorrect="off"
                     maxLength={MAX_PERSONAL_LINK_LEN}
                     value={personalLinkDraft}
                     onChange={(e) => setPersonalLinkDraft(e.target.value)}
-                    placeholder="https://tusitio.com"
-                    className="flex-1 bg-transparent text-right text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 dark:placeholder:text-zinc-600 focus:outline-none"
+                    placeholder="Ej. mi-sitio-web.com"
+                    className="w-full min-h-[44px] bg-zinc-100 border border-zinc-200 focus:border-[#6C5CE7] focus:bg-white rounded-xl px-3.5 py-2.5 text-sm font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none transition-colors"
                   />
-                </div>
-
-                <div className="px-4 py-3 flex items-center justify-between gap-3">
-                  <label
-                    htmlFor="edit-profile-pronouns"
-                    className="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 w-28"
-                  >
-                    Pronombre
-                  </label>
-                  <select
-                    id="edit-profile-pronouns"
-                    value={
-                      PRONOUN_OPTIONS.includes(pronounsDraft as (typeof PRONOUN_OPTIONS)[number])
-                        ? pronounsDraft
-                        : 'custom'
-                    }
-                    onChange={(e) => {
-                      if (e.target.value !== 'custom') {
-                        setPronounsDraft(e.target.value);
-                      }
-                    }}
-                    className="bg-zinc-100 dark:bg-[#0F111A] border border-zinc-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-900 dark:text-white focus:outline-none"
-                  >
-                    <option value="">Seleccionar</option>
-                    {PRONOUN_OPTIONS.filter(Boolean).map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
-              {pronounsDraft &&
-                !PRONOUN_OPTIONS.includes(pronounsDraft as (typeof PRONOUN_OPTIONS)[number]) && (
-                  <input
-                    type="text"
-                    maxLength={MAX_PRONOUNS_LEN}
-                    value={pronounsDraft}
-                    onChange={(e) => setPronounsDraft(e.target.value)}
-                    className="w-full min-h-[42px] bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-xl px-3.5 text-sm text-zinc-900 dark:text-white focus:outline-none"
-                  />
-                )}
             </div>
 
             <button
               type="submit"
               disabled={savingProfile}
-              className="w-full min-h-[48px] rounded-xl bg-neon-cta disabled:opacity-50 text-white text-sm font-semibold transition-all cursor-pointer"
+              className="w-full min-h-[48px] rounded-xl bg-neon-cta disabled:opacity-50 text-white text-sm font-semibold transition-all cursor-pointer shadow-md shadow-[#E84393]/20"
             >
               {savingProfile ? 'Guardando cambios...' : 'Guardar cambios'}
             </button>
@@ -2970,23 +2843,6 @@ export function ProfileView({
 
                     <button
                       type="button"
-                      onClick={openEditDescription}
-                      className="w-full min-h-[60px] p-4 rounded-2xl bg-white dark:bg-[#161926] hover:bg-zinc-50 dark:hover:bg-white/[0.06] border border-zinc-200 dark:border-white/10 flex items-center justify-between gap-3 text-left transition-colors cursor-pointer shadow-xs dark:shadow-none"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Pencil className="w-5 h-5 text-zinc-600 dark:text-zinc-300 shrink-0" />
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-zinc-900 dark:text-white">Editar descripción</p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-                            Presentación, color de texto e ideas rápidas
-                          </p>
-                        </div>
-                      </div>
-                      <span className="text-xs text-zinc-400 dark:text-zinc-500">→</span>
-                    </button>
-
-                    <button
-                      type="button"
                       onClick={() => setDrawerSection('pii')}
                       className="w-full min-h-[60px] p-4 rounded-2xl bg-white dark:bg-[#161926] hover:bg-zinc-50 dark:hover:bg-white/[0.06] border border-zinc-200 dark:border-white/10 flex items-center justify-between gap-3 text-left transition-colors cursor-pointer shadow-xs dark:shadow-none"
                     >
@@ -3128,8 +2984,9 @@ export function ProfileView({
                                 sizeClass="w-10 h-10"
                               />
                               <div className="min-w-0">
-                                <p className="text-xs font-semibold text-zinc-900 dark:text-white truncate">
-                                  {creator.displayName}
+                                <p className="text-xs font-semibold text-zinc-900 dark:text-white flex items-center gap-1 min-w-0">
+                                  <span className="truncate">{creator.displayName}</span>
+                                  {isAccountVerified(creator) && <VerifiedBadge size={16} />}
                                 </p>
                                 <p className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                                   @{creator.username}
@@ -3224,8 +3081,9 @@ export function ProfileView({
                         sizeClass="w-10 h-10"
                       />
                       <div className="text-left min-w-0">
-                        <p className="text-sm font-bold text-zinc-950 truncate">
-                          {currentUser.displayName}
+                        <p className="text-sm font-bold text-zinc-950 flex items-center gap-1.5 min-w-0">
+                          <span className="truncate">{currentUser.displayName}</span>
+                          {isAccountVerified(currentUser) && <VerifiedBadge size={16} />}
                         </p>
                         <p className="font-mono text-xs text-zinc-600 truncate">
                           @{currentUser.username}

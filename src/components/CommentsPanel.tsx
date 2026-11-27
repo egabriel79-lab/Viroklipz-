@@ -3,11 +3,13 @@ import { MessageCircle, Send, Trash2, X } from 'lucide-react';
 import { MAX_COMMENT_LEN, validateCommentText } from '../lib/validation';
 import type { ClipComment, ClipItem, UserProfile } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface CommentsPanelProps {
   clip: ClipItem | null;
   comments: ClipComment[];
   currentUser: UserProfile | null;
+  verifiedUserIds?: Set<string>;
   isMobileOpen: boolean;
   onCloseMobile: () => void;
   onAddComment: (text: string) => Promise<void>;
@@ -30,6 +32,7 @@ export function CommentsPanel({
   clip,
   comments,
   currentUser,
+  verifiedUserIds,
   isMobileOpen,
   onCloseMobile,
   onAddComment,
@@ -92,8 +95,14 @@ export function CommentsPanel({
       {/* Clip context */}
       {clip && (
         <div className="px-5 py-3 border-b border-zinc-200/70 dark:border-white/5 bg-zinc-50 dark:bg-white/[0.02] shrink-0">
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
-            Klip de <span className="text-zinc-800 dark:text-zinc-200 font-medium">@{clip.authorUsername}</span>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1 min-w-0">
+            <span className="shrink-0">Klip de</span>
+            <span className="text-zinc-800 dark:text-zinc-200 font-medium truncate">
+              @{clip.authorUsername}
+            </span>
+            {(clip.authorVerified || verifiedUserIds?.has(clip.authorId)) && (
+              <VerifiedBadge size={16} />
+            )}
           </p>
         </div>
       )}
@@ -126,10 +135,11 @@ export function CommentsPanel({
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs min-w-0">
+                    <div className="flex items-center gap-1.5 text-xs min-w-0">
                       <span className="font-semibold text-zinc-800 dark:text-zinc-200 truncate">
                         @{cmt.authorUsername}
                       </span>
+                      {verifiedUserIds?.has(cmt.authorId) && <VerifiedBadge size={16} />}
                       <span className="text-zinc-400 dark:text-zinc-600" aria-hidden="true">
                         ·
                       </span>

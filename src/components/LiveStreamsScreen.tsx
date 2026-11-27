@@ -26,6 +26,7 @@ import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
 import { LiveBattleScreen } from './LiveBattleScreen';
 import { LiveViewerScreen } from './LiveViewerScreen';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 
 export interface LiveStreamItem {
   streamId?: string;
@@ -118,6 +119,8 @@ export function buildLiveStreamsFromCreators(
         bio: record.about || 'En vivo en Viroklipz.',
         avatarUrl: record.hostAvatarUrl,
         followersLabel: knownCreator?.followersLabel || '',
+        followersCount: knownCreator?.followersCount,
+        isVerified: knownCreator?.isVerified,
         fanLevel: knownCreator?.fanLevel ?? 1,
       },
       streamTitle: record.title,
@@ -439,10 +442,11 @@ export function LiveStreamsScreen({
                       />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex items-center gap-1 min-w-0">
                         <p className="text-xs font-bold text-white truncate">
                           @{stream.creator.username}
                         </p>
+                        {isAccountVerified(stream.creator) && <VerifiedBadge size={16} />}
                         <FanLevelBadge
                           level={resolveFanLevel(stream.creator.fanLevel)}
                           compact

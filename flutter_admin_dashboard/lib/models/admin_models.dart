@@ -25,9 +25,12 @@ class AdminUserModel {
   final int followersCount;
   final int fanLevel;
   final bool isAdmin;
+  final bool isVerified;
   final bool isBanned;
   final bool isPublic;
   final DateTime createdAt;
+
+  bool get hasVerifiedBadge => isVerified || followersCount >= 10000;
 
   const AdminUserModel({
     required this.uid,
@@ -40,6 +43,7 @@ class AdminUserModel {
     required this.followersCount,
     required this.fanLevel,
     required this.isAdmin,
+    required this.isVerified,
     required this.isBanned,
     required this.isPublic,
     required this.createdAt,
@@ -63,6 +67,7 @@ class AdminUserModel {
       followersCount: _parseInt(data['followersCount'], 0),
       fanLevel: _parseInt(data['fanLevel'], 1),
       isAdmin: data['isAdmin'] == true,
+      isVerified: data['isVerified'] == true,
       isBanned: suspended,
       isPublic: data['isPublic'] != false,
       createdAt: _parseTimestamp(data['createdAt']),

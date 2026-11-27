@@ -15,6 +15,7 @@ import { audioEngine } from '../lib/audioEngine';
 import { getClipMediaBlob } from '../lib/mediaStorage';
 import type { ClipItem } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
+import { VerifiedBadge } from './VerifiedBadge';
 
 interface ClipPlayerProps {
   clip: ClipItem;
@@ -23,12 +24,14 @@ interface ClipPlayerProps {
   isBookmarked: boolean;
   isFollowing: boolean;
   isOwnClip: boolean;
+  authorVerified?: boolean;
   dataSaver?: boolean;
   onToggleLike: (forceLike?: boolean) => void;
   onToggleBookmark: () => void;
   onToggleFollow: () => void;
   onOpenComments: () => void;
   onShare: () => void;
+  onReplay?: () => void;
   onSelectCreator: (authorId: string) => void;
 }
 
@@ -45,12 +48,14 @@ export function ClipPlayer({
   isBookmarked,
   isFollowing,
   isOwnClip,
+  authorVerified,
   dataSaver = false,
   onToggleLike,
   onToggleBookmark,
   onToggleFollow,
   onOpenComments,
   onShare,
+  onReplay,
   onSelectCreator,
 }: ClipPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(true);
@@ -63,6 +68,8 @@ export function ClipPlayer({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const lastTapRef = useRef<number>(0);
   const tapTimerRef = useRef<number | null>(null);
+  const prevVideoTimeRef = useRef<number>(0);
+  const replayReportedRef = useRef<boolean>(false);
 
   // Load real media blob from IndexedDB if user recorded/uploaded it on this device
   useEffect(() => {
@@ -99,12 +106,17 @@ export function ClipPlayer({
   const videoSrc = isImageMedia ? null : rawMediaSrc;
   const imageSrc = isImageMedia ? rawMediaSrc : clip.visualPreset;
 
-  // Reset playback state when active state changes
+  // Reset playback state when active state or clip changes
   useEffect(() => {
     if (isActive) {
       setIsPlaying(true);
     }
   }, [isActive]);
+
+  useEffect(() => {
+    prevVideoTimeRef.current = 0;
+    replayReportedRef.current = false;
+  }, [clip.id]);
 
   // Sync HTML5 video element with sound ON by default (and graceful autoplay gesture fallback)
   useEffect(() => {
@@ -158,6 +170,19 @@ export function ClipPlayer({
       }
     };
   }, [isActive, isPlaying, videoSrc, clip.audioPreset]);
+
+  // Detect repeat/loop completion for non-video fallback clips
+  useEffect(() => {
+    if (videoSrc || !isActive || !isPlaying || replayReportedRef.current) return;
+    const loopMs = Math.max(3, clip.durationSec || 12) * 1000;
+    const timer = window.setTimeout(() => {
+      if (!replayReportedRef.current) {
+        replayReportedRef.current = true;
+        onReplay?.();
+      }
+    }, loopMs);
+    return () => window.clearTimeout(timer);
+  }, [videoSrc, isActive, isPlaying, clip.durationSec, onReplay]);
 
   const showTransientPlayState = (state: 'play' | 'pause') => {
     setPlayIndicator(state);
@@ -231,6 +256,23 @@ export function ClipPlayer({
             onLoadedMetadata={(e) => {
               e.currentTarget.muted = false;
               e.currentTarget.volume = 1;
+            }}
+            onTimeUpdate={(e) => {
+              const t = e.currentTarget.currentTime;
+              const dur = e.currentTarget.duration;
+              if (
+                isActive &&
+                isPlaying &&
+                Number.isFinite(dur) &&
+                dur > 1 &&
+                prevVideoTimeRef.current > dur * 0.7 &&
+                t < 0.8 &&
+                !replayReportedRef.current
+              ) {
+                replayReportedRef.current = true;
+                onReplay?.();
+              }
+              prevVideoTimeRef.current = t;
             }}
             className="w-full h-full object-cover"
           />
@@ -411,9 +453,10 @@ export function ClipPlayer({
               e.stopPropagation();
               onSelectCreator(clip.authorId);
             }}
-            className="text-left font-display font-bold text-sm text-white hover:underline truncate cursor-pointer"
+            className="text-left font-display font-bold text-sm text-white hover:underline inline-flex items-center gap-1.5 min-w-0 max-w-full cursor-pointer"
           >
-            {clip.authorDisplayName}
+            <span className="truncate">{clip.authorDisplayName}</span>
+            {(authorVerified ?? Boolean(clip.authorVerified)) && <VerifiedBadge size={16} />}
           </button>
         </div>
 

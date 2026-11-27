@@ -24,6 +24,7 @@ import {
 import { formatCompactCount } from '../lib/validation';
 import type { ClipItem, CreatorSummary, UserProfile } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 
 interface SearchScreenProps {
   isOpen: boolean;
@@ -743,8 +744,9 @@ export function SearchScreen({
                               sizeClass="w-11 h-11"
                             />
                             <div className="min-w-0">
-                              <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
-                                {creator.displayName}
+                              <p className="text-sm font-semibold text-zinc-900 dark:text-white flex items-center gap-1.5 min-w-0">
+                                <span className="truncate">{creator.displayName}</span>
+                                {isAccountVerified(creator) && <VerifiedBadge size={16} />}
                               </p>
                               <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
                                 {creator.followersLabel

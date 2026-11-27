@@ -53,6 +53,7 @@ import { GiftCatalogSheet } from './GiftCatalogSheet';
 import { LiveBattleScreen } from './LiveBattleScreen';
 import type { LiveStreamItem } from './LiveStreamsScreen';
 import { MultiGuestLobbyScreen } from './MultiGuestLobbyScreen';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 
 interface LiveViewerScreenProps {
   stream: LiveStreamItem;
@@ -919,10 +920,11 @@ export function LiveViewerScreen({
                   />
                 </div>
                 <div className="min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0">
                     <p className="text-sm font-bold text-white truncate leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)] group-hover:text-[#F9A8D4] transition-colors">
                       {stream.creator.displayName}
                     </p>
+                    {isAccountVerified(stream.creator) && <VerifiedBadge size={16} />}
                   </div>
                   <p className="text-[11px] font-semibold text-white/85 flex items-center gap-1 tabular-nums leading-tight mt-0.5 drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
                     <Heart className="w-3 h-3 text-[#E84393] fill-[#E84393] shrink-0" />
@@ -1345,6 +1347,7 @@ export function LiveViewerScreen({
               <span className="font-semibold text-zinc-200 truncate max-w-[160px]">
                 {currentUser?.displayName || currentUser?.username || 'Invitado'}
               </span>
+              {isAccountVerified(currentUser) && <VerifiedBadge size={16} />}
               <FanLevelBadge level={viewerFanLevel} compact />
             </div>
             <span className="text-[10px] font-semibold text-zinc-300 truncate max-w-[160px]">

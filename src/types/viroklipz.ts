@@ -56,7 +56,9 @@ export interface UserProfile {
   avatarUrl: string;
   isPublic: boolean;
   isAdmin?: boolean;
+  isVerified?: boolean;
   followersCount?: number;
+  fcmToken?: string;
   fcmTokenWeb?: string;
   presenceStatus?: PresenceStatus;
   mutedCommunityChat?: boolean;
@@ -93,6 +95,8 @@ export interface ClipItem {
   authorUsername: string;
   authorDisplayName: string;
   authorAvatarUrl: string;
+  authorVerified?: boolean;
+  authorFollowersCount?: number;
   caption: string;
   category: string;
   hashtags: string[];
@@ -100,6 +104,7 @@ export interface ClipItem {
   audioPreset: string;
   visualPreset: string;
   videoUrl?: string;
+  mediaType?: 'video';
   durationSec: number;
   hasLocalMedia: boolean;
   visibility: ClipVisibility;
@@ -107,6 +112,7 @@ export interface ClipItem {
   bookmarksCount: number;
   viewsCount: number;
   sharesCount: number;
+  replaysCount?: number;
   baseCommentsCount?: number;
   viewsLabel?: string;
   createdAtMs: number;
@@ -151,6 +157,8 @@ export interface CreatorSummary {
   bio: string;
   avatarUrl: string;
   followersLabel: string;
+  followersCount?: number;
+  isVerified?: boolean;
   fanLevel?: number;
 }
 

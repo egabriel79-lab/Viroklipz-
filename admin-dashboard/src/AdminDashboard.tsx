@@ -32,6 +32,8 @@ interface AdminUserRow {
   username: string;
   displayName: string;
   isPublic: boolean;
+  isVerified: boolean;
+  followersCount: number;
   createdAtMs: number;
 }
 
@@ -141,6 +143,8 @@ export function AdminDashboard() {
           username: String(data.username || 'creador'),
           displayName: String(data.displayName || 'Creador'),
           isPublic: Boolean(data.isPublic ?? true),
+          isVerified: Boolean(data.isVerified ?? false),
+          followersCount: Number(data.followersCount || 0),
           createdAtMs: toMs(data.createdAt),
         };
       });
@@ -337,6 +341,27 @@ export function AdminDashboard() {
       showNotice('Transmisión en vivo finalizada.');
     } catch (err) {
       showNotice(err instanceof Error ? err.message : 'No se pudo finalizar el Live.');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleSetUserVerified = async (targetUser: AdminUserRow, nextVerified: boolean) => {
+    setBusyId(targetUser.uid);
+    try {
+      await updateDoc(doc(db, 'users', targetUser.uid), {
+        isVerified: nextVerified,
+        updatedAt: serverTimestamp(),
+      });
+      showNotice(
+        nextVerified
+          ? `Cuenta @${targetUser.username} verificada (isVerified: true).`
+          : `Verificación manual removida de @${targetUser.username}.`,
+      );
+    } catch (err) {
+      showNotice(
+        err instanceof Error ? err.message : 'No se pudo actualizar la verificación del usuario.',
+      );
     } finally {
       setBusyId(null);
     }
@@ -700,19 +725,61 @@ export function AdminDashboard() {
                 <tr>
                   <th className="p-3.5">Usuario</th>
                   <th className="p-3.5">Nombre</th>
+                  <th className="p-3.5">Verificado</th>
                   <th className="p-3.5">Visibilidad</th>
                   <th className="p-3.5">UID</th>
+                  <th className="p-3.5 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filteredUsers.map((u) => (
-                  <tr key={u.uid} className="hover:bg-white/5">
-                    <td className="p-3.5 font-semibold text-[#00B4D8]">@{u.username}</td>
-                    <td className="p-3.5 text-white">{u.displayName}</td>
-                    <td className="p-3.5">{u.isPublic ? 'Público' : 'Privado'}</td>
-                    <td className="p-3.5 font-mono text-zinc-400">{u.uid}</td>
-                  </tr>
-                ))}
+                {filteredUsers.map((u) => {
+                  const hasBadge = u.isVerified || u.followersCount >= 10000;
+                  return (
+                    <tr key={u.uid} className="hover:bg-white/5">
+                      <td className="p-3.5 font-semibold text-[#00B4D8]">@{u.username}</td>
+                      <td className="p-3.5 text-white">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span>{u.displayName}</span>
+                          {hasBadge && (
+                            <CheckCircle2
+                              aria-label="Cuenta verificada"
+                              className="w-4 h-4 text-[#00B4D8] shrink-0"
+                            />
+                          )}
+                        </span>
+                      </td>
+                      <td className="p-3.5">
+                        {hasBadge ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#00B4D8]/15 border border-[#00B4D8]/45 text-[#00B4D8] font-bold">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            {u.isVerified ? 'Verificado' : 'Auto (10K+)'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-400">
+                            No verificado
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3.5">{u.isPublic ? 'Público' : 'Privado'}</td>
+                      <td className="p-3.5 font-mono text-zinc-400">{u.uid}</td>
+                      <td className="p-3.5 text-right">
+                        <button
+                          type="button"
+                          disabled={busyId === u.uid}
+                          onClick={() => void handleSetUserVerified(u, !u.isVerified)}
+                          className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                            u.isVerified
+                              ? 'bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
+                              : 'bg-[#00B4D8] hover:bg-[#009ec0] text-white'
+                          }`}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          {u.isVerified ? 'Verificado' : 'Verificar'}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </section>

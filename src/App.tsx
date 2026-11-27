@@ -36,13 +36,26 @@ import { ProfileView } from './components/ProfileView';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { ReportModal, type ReportTarget } from './components/ReportModal';
 import { SearchScreen } from './components/SearchScreen';
+import { isAccountVerified, VerifiedBadge } from './components/VerifiedBadge';
 import {
   FEATURED_CREATORS,
   INITIAL_STARTER_COMMENTS,
   STARTER_CLIPS,
 } from './data/starterClips';
 import { audioEngine } from './lib/audioEngine';
-import { registerAndSyncWebPush, subscribeForegroundPushMessages } from './lib/fcmNotifications';
+import {
+  shouldShowClipInExplorePage,
+  shouldShowClipInFollowingFeed,
+  shouldShowClipInSuggestedFeed,
+  sortClipsForExplorePage,
+  sortClipsForSuggestedFeed,
+} from './lib/distributionAlgorithm';
+import {
+  registerAndSyncWebPush,
+  showLocalBreakNotification,
+  subscribeForegroundPushMessages,
+  subscribeNotificationOpened,
+} from './lib/fcmNotifications';
 import { auth } from './lib/firebase';
 import {
   deleteUserBannerGallery,
@@ -64,6 +77,7 @@ import {
   mapAuthErrorMessage,
   publishClip,
   recordDailyStreakAction,
+  registerClipReplay,
   registerClipShare,
   registerClipView,
   saveStatusNote,
@@ -71,6 +85,7 @@ import {
   submitContentReport,
   subscribeActiveLiveStreams,
   subscribeClipComments,
+  subscribeEliteCommunityClips,
   subscribePublicClips,
   subscribePublicUsers,
   subscribeStatusNotes,
@@ -110,14 +125,25 @@ type FeedEntry =
 
 type DeepLinkTarget =
   | { type: 'klip'; id: string }
-  | { type: 'username'; username: string };
+  | { type: 'username'; username: string }
+  | { type: 'section'; section: AppSection };
 
-function parseInitialDeepLink(): DeepLinkTarget | null {
+function parseNotificationOrLocationUrl(rawUrl: string): DeepLinkTarget | null {
   try {
-    const url = new URL(window.location.href);
+    const base = typeof window !== 'undefined' ? window.location.origin : 'https://viroklipz.app';
+    const url = new URL(rawUrl, base);
     const queryClip = url.searchParams.get('klip')?.trim();
     if (queryClip) {
       return { type: 'klip', id: queryClip };
+    }
+    const querySection = url.searchParams.get('section')?.trim();
+    if (
+      querySection === 'feed' ||
+      querySection === 'explorar' ||
+      querySection === 'chats' ||
+      querySection === 'perfil'
+    ) {
+      return { type: 'section', section: querySection };
     }
     const path = url.pathname.replace(/\/+$/, '');
     if (path.startsWith('/klip/')) {
@@ -132,6 +158,11 @@ function parseInitialDeepLink(): DeepLinkTarget | null {
     // Ignore invalid location URL
   }
   return null;
+}
+
+function parseInitialDeepLink(): DeepLinkTarget | null {
+  if (typeof window === 'undefined') return null;
+  return parseNotificationOrLocationUrl(window.location.href);
 }
 
 function updateMetaTag(selector: string, attrName: 'name' | 'property', key: string, content: string) {
@@ -178,9 +209,13 @@ function ViroklipzApp() {
   >([]);
   const [toast, setToast] = useState<string | null>(null);
   const [toastVariant, setToastVariant] = useState<'default' | 'success'>('default');
-  const [pushAlert, setPushAlert] = useState<{ title: string; body: string } | null>(null);
+  const [pushAlert, setPushAlert] = useState<{ title: string; body: string; url?: string } | null>(
+    null,
+  );
 
   const [firestoreClips, setFirestoreClips] = useState<ClipItem[]>([]);
+  const [eliteClips, setEliteClips] = useState<ClipItem[]>([]);
+  const [eliteLoading, setEliteLoading] = useState(false);
   const [firestoreLiveStreams, setFirestoreLiveStreams] = useState<LiveStreamRecord[]>([]);
   const [publicClipsLoaded, setPublicClipsLoaded] = useState(false);
   const [privateClips, setPrivateClips] = useState<ClipItem[]>([]);
@@ -292,6 +327,7 @@ function ViroklipzApp() {
               welcomeRechargeClaimed: wallet.welcomeRechargeClaimed,
               followersCount: wallet.followersCount,
               isAdmin: wallet.isAdmin,
+              isVerified: wallet.isVerified,
             }
           : prev,
       );
@@ -313,6 +349,17 @@ function ViroklipzApp() {
       unsubLives();
     };
   }, []);
+
+  // Elite Community Feed (Top 20 creators with >= 2,000 followers ordered descending)
+  useEffect(() => {
+    if (section !== 'explorar') return;
+    setEliteLoading(true);
+    const unsub = subscribeEliteCommunityClips((snap) => {
+      setEliteClips(snap.clips);
+      setEliteLoading(snap.loading);
+    });
+    return () => unsub();
+  }, [section]);
 
   // Authenticated user reactions, blocked accounts, streak, statusNotes & private clips listeners
   useEffect(() => {
@@ -339,16 +386,16 @@ function ViroklipzApp() {
     };
   }, [authReady, currentUser?.uid]);
 
-  // Register FCM Web Push permission + Service Worker + foreground message listener on sign-in
+  // Register FCM Web Push permission + Service Worker + foreground & opened-app listeners on sign-in
   useEffect(() => {
     if (!authReady || !currentUser?.uid) return;
     let active = true;
     let unsubForeground: (() => void) | null = null;
 
     void registerAndSyncWebPush(currentUser.uid);
-    void subscribeForegroundPushMessages((title, body) => {
+    void subscribeForegroundPushMessages(({ title, body, url }) => {
       if (!active || isCommunityMutedRef.current) return;
-      setPushAlert({ title, body });
+      setPushAlert({ title, body, url });
       window.setTimeout(() => {
         setPushAlert((curr) => (curr?.title === title && curr?.body === body ? null : curr));
       }, 5000);
@@ -360,11 +407,51 @@ function ViroklipzApp() {
       }
     });
 
+    const unsubOpened = subscribeNotificationOpened(({ url }) => {
+      if (!active) return;
+      const target = parseNotificationOrLocationUrl(url);
+      if (target) {
+        setPendingDeepLink(target);
+      }
+    });
+
     return () => {
       active = false;
       if (unsubForeground) unsubForeground();
+      unsubOpened();
     };
   }, [authReady, currentUser?.uid]);
+
+  // Recordatorio de descanso tras 1 hora continua viendo videos en el Feed principal
+  useEffect(() => {
+    const isViewingMainFeed =
+      authReady &&
+      (Boolean(currentUser) || allowGuestFeed) &&
+      section === 'feed' &&
+      !isLiveHubOpen &&
+      !isCreateOpen;
+
+    if (!isViewingMainFeed) return;
+
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const BREAK_TITLE = 'Hora de un descanso en Viroklipz';
+    const BREAK_BODY =
+      '¡Oye! Llevas 1 hora en Viroklipz. ¿Qué tal un descanso para estirar las piernas? 🧘‍♂️';
+
+    const timerId = window.setTimeout(() => {
+      void showLocalBreakNotification(BREAK_TITLE, BREAK_BODY);
+      setPushAlert({ title: BREAK_TITLE, body: BREAK_BODY });
+      window.setTimeout(() => {
+        setPushAlert((curr) =>
+          curr?.title === BREAK_TITLE && curr?.body === BREAK_BODY ? null : curr,
+        );
+      }, 9000);
+    }, ONE_HOUR_MS);
+
+    return () => {
+      window.clearTimeout(timerId);
+    };
+  }, [authReady, currentUser, allowGuestFeed, section, isLiveHubOpen, isCreateOpen]);
 
   // Load saved profile photo from device gallery (IndexedDB)
   useEffect(() => {
@@ -531,7 +618,7 @@ function ViroklipzApp() {
   const liveAuthorsMap = useMemo(() => {
     const map = new Map<
       string,
-      { displayName: string; username: string; avatarUrl: string; bio: string }
+      { displayName: string; username: string; avatarUrl: string; bio: string; isVerified: boolean }
     >();
     for (const u of publicUsers) {
       map.set(u.uid, {
@@ -539,6 +626,7 @@ function ViroklipzApp() {
         username: u.username,
         avatarUrl: u.avatarUrl,
         bio: u.bio,
+        isVerified: isAccountVerified(u),
       });
     }
     if (effectiveUser) {
@@ -547,6 +635,7 @@ function ViroklipzApp() {
         username: effectiveUser.username,
         avatarUrl: effectiveUser.avatarUrl,
         bio: effectiveUser.bio,
+        isVerified: isAccountVerified(effectiveUser),
       });
     }
     return map;
@@ -559,10 +648,12 @@ function ViroklipzApp() {
       const nextDisplayName = live.displayName || clip.authorDisplayName;
       const nextUsername = live.username || clip.authorUsername;
       const nextAvatarUrl = live.avatarUrl || clip.authorAvatarUrl;
+      const nextVerified = live.isVerified;
       if (
         nextDisplayName === clip.authorDisplayName &&
         nextUsername === clip.authorUsername &&
-        nextAvatarUrl === clip.authorAvatarUrl
+        nextAvatarUrl === clip.authorAvatarUrl &&
+        nextVerified === Boolean(clip.authorVerified)
       ) {
         return clip;
       }
@@ -571,6 +662,7 @@ function ViroklipzApp() {
         authorDisplayName: nextDisplayName,
         authorUsername: nextUsername,
         authorAvatarUrl: nextAvatarUrl,
+        authorVerified: nextVerified,
       };
     },
     [liveAuthorsMap],
@@ -583,6 +675,14 @@ function ViroklipzApp() {
       (clip) => !blockedIds.has(clip.authorId) && !notInterestedIds.has(clip.id),
     );
   }, [firestoreClips, applyLiveAuthor, blockedIds, notInterestedIds]);
+
+  const visibleEliteClips = useMemo(() => {
+    const mapped = eliteClips.map(applyLiveAuthor);
+    if (blockedIds.size === 0 && notInterestedIds.size === 0) return mapped;
+    return mapped.filter(
+      (clip) => !blockedIds.has(clip.authorId) && !notInterestedIds.has(clip.id),
+    );
+  }, [eliteClips, applyLiveAuthor, blockedIds, notInterestedIds]);
 
   const allUserAccessibleClips = useMemo(() => {
     return [...privateClips.map(applyLiveAuthor), ...allPublicClips];
@@ -599,7 +699,12 @@ function ViroklipzApp() {
         displayName: effectiveUser.displayName,
         bio: effectiveUser.bio || 'Creador de contenido en Viroklipz.',
         avatarUrl: effectiveUser.avatarUrl,
-        followersLabel: '',
+        followersLabel:
+          typeof effectiveUser.followersCount === 'number' && effectiveUser.followersCount > 0
+            ? String(effectiveUser.followersCount)
+            : '',
+        followersCount: effectiveUser.followersCount,
+        isVerified: effectiveUser.isVerified,
       });
     }
     allUserAccessibleClips.forEach((clip) => {
@@ -611,11 +716,28 @@ function ViroklipzApp() {
           bio: 'Creador de contenido en Viroklipz.',
           avatarUrl: clip.authorAvatarUrl,
           followersLabel: '',
+          isVerified: clip.authorVerified,
         });
       }
     });
     return Array.from(map.values());
   }, [publicUsers, effectiveUser, allUserAccessibleClips]);
+
+  const verifiedUserIds = useMemo(() => {
+    const set = new Set<string>();
+    creatorsDirectory.forEach((c) => {
+      if (isAccountVerified(c)) set.add(c.uid);
+    });
+    if (isAccountVerified(effectiveUser)) {
+      set.add(effectiveUser!.uid);
+    }
+    return set;
+  }, [creatorsDirectory, effectiveUser]);
+
+  const resolvedViewedCreator = useMemo(() => {
+    if (!viewedCreator) return null;
+    return creatorsDirectory.find((c) => c.uid === viewedCreator.uid) || viewedCreator;
+  }, [viewedCreator, creatorsDirectory]);
 
   const liveStreams = useMemo(() => {
     const otherCreators = creatorsDirectory.filter(
@@ -631,10 +753,20 @@ function ViroklipzApp() {
 
   const feedClips = useMemo(() => {
     if (feedTab === 'siguiendo') {
-      return allPublicClips.filter((c) => followingIds.has(c.authorId));
+      return allPublicClips.filter(
+        (c) =>
+          followingIds.has(c.authorId) &&
+          shouldShowClipInFollowingFeed(c, currentUser?.uid ?? null),
+      );
     }
-    return allPublicClips;
-  }, [allPublicClips, feedTab, followingIds]);
+    const suggested = allPublicClips.filter(shouldShowClipInSuggestedFeed);
+    const pool = suggested.length > 0 ? suggested : STARTER_CLIPS;
+    return sortClipsForSuggestedFeed(pool);
+  }, [allPublicClips, feedTab, followingIds, currentUser?.uid]);
+
+  const explorePageClips = useMemo(() => {
+    return sortClipsForExplorePage(allPublicClips.filter(shouldShowClipInExplorePage));
+  }, [allPublicClips]);
 
   // Mix both short videos AND live streams inside Para ti (and followed creators' lives in Siguiendo)
   const feedEntries = useMemo<FeedEntry[]>(() => {
@@ -698,6 +830,17 @@ function ViroklipzApp() {
   }, [feedEntries.length, activeIndex]);
 
   const viewedSessionClipsRef = useRef<Set<string>>(new Set());
+  const replayedSessionClipsRef = useRef<Set<string>>(new Set());
+
+  const handleRegisterClipReplay = useCallback(
+    (clip: ClipItem) => {
+      if (clip.isStarter || !currentUser) return;
+      if (replayedSessionClipsRef.current.has(clip.id)) return;
+      replayedSessionClipsRef.current.add(clip.id);
+      void registerClipReplay(clip);
+    },
+    [currentUser],
+  );
 
   useEffect(() => {
     if (section !== 'feed' || isLiveHubOpen || isCreateOpen || !activeClip) {
@@ -788,9 +931,17 @@ function ViroklipzApp() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [section, isCreateOpen, activeIndex, scrollToClipIndex]);
 
-  // Resolve shared deep links (/klip/:id, /?klip=:id, /@usuario)
+  // Resolve shared deep links & notification clicks (/klip/:id, /?klip=:id, /?section=chats, /@usuario)
   useEffect(() => {
     if (!pendingDeepLink || !authReady) return;
+    if (pendingDeepLink.type === 'section') {
+      if (pendingDeepLink.section !== 'perfil') {
+        setViewedCreator(null);
+      }
+      setSection(pendingDeepLink.section);
+      setPendingDeepLink(null);
+      return;
+    }
     if (pendingDeepLink.type === 'klip') {
       const existsInPublic = allPublicClips.some((c) => c.id === pendingDeepLink.id);
       if (existsInPublic) {
@@ -1304,8 +1455,9 @@ function ViroklipzApp() {
                     sizeClass="w-8 h-8"
                   />
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200 truncate">
-                      {creator.displayName}
+                    <p className="text-xs font-semibold text-zinc-900 dark:text-zinc-200 flex items-center gap-1 min-w-0">
+                      <span className="truncate">{creator.displayName}</span>
+                      {isAccountVerified(creator) && <VerifiedBadge size={16} />}
                     </p>
                     <p className="text-[11px] text-zinc-500 truncate">
                       @{creator.username} · {creator.followersLabel}
@@ -1347,8 +1499,9 @@ function ViroklipzApp() {
                 sizeClass="w-9 h-9"
               />
               <div className="min-w-0">
-                <p className="text-xs font-semibold text-zinc-950 dark:text-white truncate">
-                  {effectiveUser.displayName}
+                <p className="text-xs font-semibold text-zinc-950 dark:text-white flex items-center gap-1 min-w-0">
+                  <span className="truncate">{effectiveUser.displayName}</span>
+                  {isAccountVerified(effectiveUser) && <VerifiedBadge size={16} />}
                 </p>
                 <p className="font-mono text-[11px] text-zinc-500 dark:text-zinc-400 truncate">
                   @{effectiveUser.username}
@@ -1475,6 +1628,7 @@ function ViroklipzApp() {
                             isBookmarked={bookmarkedIds.has(entry.clip.id)}
                             isFollowing={followingIds.has(entry.clip.authorId)}
                             isOwnClip={Boolean(currentUser && entry.clip.authorId === currentUser.uid)}
+                            authorVerified={verifiedUserIds.has(entry.clip.authorId)}
                             dataSaver={dataSaver}
                             onToggleLike={(force) => void handleToggleLike(entry.clip, force)}
                             onToggleBookmark={() => void handleToggleBookmark(entry.clip)}
@@ -1483,6 +1637,7 @@ function ViroklipzApp() {
                             }
                             onOpenComments={() => setIsCommentsMobileOpen(true)}
                             onShare={() => void handleShare(entry.clip)}
+                            onReplay={() => handleRegisterClipReplay(entry.clip)}
                             onSelectCreator={handleOpenCreatorProfile}
                           />
                         ) : (
@@ -1557,8 +1712,9 @@ function ViroklipzApp() {
                           />
                         </div>
                         <div className="min-w-0">
-                          <p className="font-display font-bold text-base text-zinc-950 dark:text-white truncate">
-                            {activeLiveStream.creator.displayName}
+                          <p className="font-display font-bold text-base text-zinc-950 dark:text-white flex items-center gap-1.5 min-w-0">
+                            <span className="truncate">{activeLiveStream.creator.displayName}</span>
+                            {isAccountVerified(activeLiveStream.creator) && <VerifiedBadge size={16} />}
                           </p>
                           <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
                             @{activeLiveStream.creator.username}
@@ -1587,6 +1743,7 @@ function ViroklipzApp() {
                     clip={activeClip}
                     comments={mergedComments}
                     currentUser={effectiveUser}
+                    verifiedUserIds={verifiedUserIds}
                     isMobileOpen={isCommentsMobileOpen}
                     onCloseMobile={() => setIsCommentsMobileOpen(false)}
                     onAddComment={async (text) => {
@@ -1609,9 +1766,12 @@ function ViroklipzApp() {
         {section === 'explorar' && (
           <div className="pt-[env(safe-area-inset-top)] pb-[calc(3.5rem+env(safe-area-inset-bottom))] lg:pt-0 lg:pb-0">
             <ExploreView
-              clips={allPublicClips}
+              clips={visibleEliteClips}
+              exploreClips={explorePageClips}
+              isLoading={eliteLoading}
               likedIds={likedIds}
               currentUserUid={currentUser?.uid ?? null}
+              verifiedUserIds={verifiedUserIds}
               onSelectClip={handleSelectClipFromGrid}
               onOpenSearch={() => setIsSearchOpen(true)}
               onReportClip={(clip) =>
@@ -1677,7 +1837,7 @@ function ViroklipzApp() {
             <ProfileView
               currentUser={effectiveUser}
               privateInfo={privateInfo}
-              viewedCreator={viewedCreator}
+              viewedCreator={resolvedViewedCreator}
               streak={userStreak}
               allClips={allUserAccessibleClips}
               likedIds={likedIds}
@@ -1917,17 +2077,29 @@ function ViroklipzApp() {
           role="alert"
           className="fixed top-[calc(3.75rem+env(safe-area-inset-top))] lg:top-5 right-4 z-50 max-w-sm w-[calc(100%-2rem)] bg-white dark:bg-[#161926] border border-[#6C5CE7]/45 rounded-2xl p-3.5 shadow-2xl flex items-start gap-3"
         >
-          <div className="w-8 h-8 rounded-full bg-[#6C5CE7]/15 flex items-center justify-center shrink-0">
-            <Bell className="w-4 h-4 text-[#6C5CE7] dark:text-[#8B7CF6]" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-zinc-950 dark:text-white truncate">
-              {pushAlert.title}
-            </p>
-            <p className="text-xs text-zinc-600 dark:text-zinc-300 mt-0.5 line-clamp-2">
-              {pushAlert.body}
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (pushAlert.url) {
+                const target = parseNotificationOrLocationUrl(pushAlert.url);
+                if (target) setPendingDeepLink(target);
+              }
+              setPushAlert(null);
+            }}
+            className="flex items-start gap-3 min-w-0 flex-1 text-left cursor-pointer"
+          >
+            <div className="w-8 h-8 rounded-full bg-[#6C5CE7]/15 flex items-center justify-center shrink-0">
+              <Bell className="w-4 h-4 text-[#6C5CE7] dark:text-[#8B7CF6]" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-bold text-zinc-950 dark:text-white truncate">
+                {pushAlert.title}
+              </p>
+              <p className="text-xs text-zinc-600 dark:text-zinc-300 mt-0.5 line-clamp-2">
+                {pushAlert.body}
+              </p>
+            </div>
+          </button>
           <button
             type="button"
             onClick={() => setPushAlert(null)}

@@ -67,6 +67,7 @@ class AdminFirestoreService {
       followersCount: 0,
       fanLevel: 50,
       isAdmin: true,
+      isVerified: true,
       isBanned: false,
       isPublic: true,
       createdAt: DateTime.now(),
@@ -135,6 +136,17 @@ class AdminFirestoreService {
     await db.collection('users').doc(uid).update({
       'isBanned': isBanned,
       'banned': isBanned,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Actualiza `isVerified` en `/users/{uid}` para otorgar o revocar el badge azul.
+  Future<void> setUserVerified({
+    required String uid,
+    required bool isVerified,
+  }) async {
+    await db.collection('users').doc(uid).update({
+      'isVerified': isVerified,
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }

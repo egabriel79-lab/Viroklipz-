@@ -20,8 +20,8 @@ import {
   MAX_AUDIO_TITLE_LEN,
   MAX_CATEGORY_LEN,
   parseHashtags,
-  validateClipMediaFile,
   validateClipPayload,
+  validateClipVideoFile,
 } from '../lib/validation';
 import type {
   ClipVisibility,
@@ -31,7 +31,7 @@ import { GoLiveScreen } from './GoLiveScreen';
 
 interface CreateClipModalProps {
   isOpen: boolean;
-  initialMode?: 'video' | 'preset' | 'live';
+  initialMode?: 'video' | 'live';
   currentUser: UserProfile | null;
   defaultDataSaver?: boolean;
   onClose: () => void;
@@ -73,7 +73,7 @@ export function CreateClipModal({
   onPublish,
 }: CreateClipModalProps) {
   const [step, setStep] = useState<'capture' | 'details'>('capture');
-  const [mode, setMode] = useState<'video' | 'preset' | 'live'>(initialMode);
+  const [mode, setMode] = useState<'video' | 'live'>(initialMode);
   const [lowBitrateCapture, setLowBitrateCapture] = useState(defaultDataSaver);
   const [selectedMaxDuration, setSelectedMaxDuration] = useState<RecordDurationOption>(15);
   const [caption, setCaption] = useState('');
@@ -81,14 +81,13 @@ export function CreateClipModal({
   const [hashtagsRaw, setHashtagsRaw] = useState('');
   const [audioPreset, setAudioPreset] = useState('');
   const [audioTitle, setAudioTitle] = useState('');
-  const [visualPreset, setVisualPreset] = useState(VISUAL_PRESETS[0].imageUrl);
+  const [visualPreset] = useState(VISUAL_PRESETS[0].imageUrl);
   const [durationSec, setDurationSec] = useState(15);
   const [visibility, setVisibility] = useState<ClipVisibility>('public');
 
   const [mediaBlob, setMediaBlob] = useState<Blob | null>(null);
   const [mediaBytes, setMediaBytes] = useState<Uint8Array | null>(null);
   const [mediaMimeType, setMediaMimeType] = useState<string>('video/mp4');
-  const [mediaKind, setMediaKind] = useState<'video' | 'image'>('video');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -131,7 +130,7 @@ export function CreateClipModal({
       if (!navigator.mediaDevices?.getUserMedia) {
         if (!silentIfDenied) {
           setErrorMsg(
-            'Tu navegador no permite acceso a la cámara. Puedes subir un archivo o usar una escena visual.',
+            'Tu navegador no permite acceso a la cámara. Puedes subir un video desde tu dispositivo.',
           );
         }
         return;
@@ -145,7 +144,6 @@ export function CreateClipModal({
         setCameraActive(true);
         setMediaBlob(null);
         setMediaBytes(null);
-        setMediaKind('video');
         setPreviewUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return null;
@@ -213,7 +211,7 @@ export function CreateClipModal({
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const check = validateClipMediaFile(file);
+    const check = validateClipVideoFile(file);
     if (!check.ok) {
       setErrorMsg(check.message);
       return;
@@ -225,7 +223,7 @@ export function CreateClipModal({
       const buffer = await file.arrayBuffer();
       const bytes = new Uint8Array(buffer);
       if (bytes.byteLength <= 0) {
-        setErrorMsg('No se pudieron leer los bytes del archivo seleccionado.');
+        setErrorMsg('No se pudieron leer los bytes del video seleccionado.');
         return;
       }
       const standaloneBlob = new Blob([buffer], { type: check.mimeType });
@@ -233,15 +231,11 @@ export function CreateClipModal({
       const url = URL.createObjectURL(standaloneBlob);
       setMediaBytes(bytes);
       setMediaMimeType(check.mimeType);
-      setMediaKind(check.kind);
       setMediaBlob(standaloneBlob);
       setPreviewUrl(url);
-      if (check.kind === 'image') {
-        setDurationSec(selectedMaxDuration);
-      }
       setStep('details');
     } catch {
-      setErrorMsg('No se pudo procesar el archivo seleccionado. Inténtalo con otro archivo.');
+      setErrorMsg('No se pudo procesar el video seleccionado. Inténtalo con otro archivo.');
     }
   };
 
@@ -288,7 +282,6 @@ export function CreateClipModal({
             const url = URL.createObjectURL(safeBlob);
             setMediaBytes(bytes);
             setMediaMimeType(mimeType);
-            setMediaKind('video');
             setMediaBlob(safeBlob);
             setPreviewUrl(url);
             setDurationSec(Math.max(3, Math.min(maxDurationForRun, latestSeconds || maxDurationForRun)));
@@ -330,7 +323,6 @@ export function CreateClipModal({
     }
     setMediaBlob(null);
     setMediaBytes(null);
-    setMediaKind('video');
     setStep('capture');
     if (mode === 'video') {
       void startCamera(true);
@@ -338,6 +330,10 @@ export function CreateClipModal({
   };
 
   const handleProceedToDetails = () => {
+    if (!mediaBytes || mediaBytes.byteLength === 0) {
+      setErrorMsg('Graba o selecciona un video antes de continuar.');
+      return;
+    }
     stopCamera();
     setErrorMsg(null);
     setStep('details');
@@ -353,6 +349,11 @@ export function CreateClipModal({
     e.preventDefault();
     if (!currentUser) {
       onRequestSignIn();
+      return;
+    }
+
+    if (!mediaBytes || mediaBytes.byteLength === 0) {
+      setErrorMsg('Solo puedes publicar videos. Graba o sube un video primero.');
       return;
     }
 
@@ -384,9 +385,9 @@ export function CreateClipModal({
         visualPreset,
         durationSec,
         visibility: resolvedVisibility,
-        mediaBlob: mode === 'video' ? mediaBlob : null,
-        mediaBytes: mode === 'video' ? mediaBytes : null,
-        mediaMimeType: mode === 'video' ? mediaMimeType : undefined,
+        mediaBlob,
+        mediaBytes,
+        mediaMimeType,
       });
       setCaption('');
       setCategory('');
@@ -396,7 +397,6 @@ export function CreateClipModal({
       setVisibility('public');
       setMediaBlob(null);
       setMediaBytes(null);
-      setMediaKind('video');
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
         setPreviewUrl(null);
@@ -540,100 +540,83 @@ export function CreateClipModal({
   if (step === 'capture') {
     return (
       <div className="fixed inset-0 z-50 bg-black flex flex-col overflow-hidden">
-        {/* Full-bleed Media / Camera Stage */}
+        {/* Full-bleed Video Capture Stage */}
         <div className="relative flex-1 w-full h-full overflow-hidden">
-          {mode === 'video' ? (
-            cameraActive ? (
-              <video
-                ref={liveVideoRef}
-                muted
-                playsInline
-                className="w-full h-full object-cover"
-              />
-            ) : previewUrl ? (
-              mediaKind === 'image' ? (
-                <img
-                  src={previewUrl}
-                  alt="Vista previa de imagen seleccionada"
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <video
-                  src={previewUrl}
-                  autoPlay
-                  loop
-                  playsInline
-                  onLoadedMetadata={(e) => {
-                    const d = e.currentTarget.duration;
-                    if (Number.isFinite(d) && d > 60) {
-                      setErrorMsg('El video supera los 60 segundos máximos permitidos.');
-                      handleResetCapture();
-                      return;
-                    }
-                    if (Number.isFinite(d) && d >= 3) {
-                      setDurationSec(Math.min(60, Math.round(d)));
-                    }
-                  }}
-                  className="w-full h-full object-cover"
-                />
-              )
-            ) : (
-              <div className="w-full h-full bg-[#0F111A] flex flex-col items-center justify-center p-6 text-center space-y-5">
-                <Film className="w-11 h-11 text-[#6C5CE7]" />
-                <div className="space-y-1.5 max-w-xs">
-                  <h2 className="font-display text-xl font-bold text-white">
-                    Graba o elige tu archivo
-                  </h2>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    Elige la duración (10s, 15s, 30s o 60s), sube un video o imagen desde tu dispositivo, o transmite en vivo.
-                  </p>
-                </div>
-
-                {errorMsg && (
-                  <p className="max-w-xs text-xs text-rose-200 bg-[#E84393]/15 border border-[#E84393]/40 rounded-xl px-3.5 py-2.5">
-                    {errorMsg}
-                  </p>
-                )}
-
-                <div className="w-full max-w-xs flex flex-col gap-2.5 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => void startCamera(false)}
-                    className="min-h-[48px] px-5 rounded-xl bg-neon-cta text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
-                  >
-                    <Camera className="w-4 h-4" />
-                    Activar cámara
-                  </button>
-
-                  <label className="min-h-[48px] px-5 rounded-xl bg-[#161926] hover:bg-white/10 border border-[#00B4D8]/35 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer">
-                    <Upload className="w-4 h-4 text-[#00B4D8]" />
-                    Subir video o imagen
-                    <input
-                      type="file"
-                      accept="video/*,image/*"
-                      onChange={(ev) => void handleFilePick(ev)}
-                      className="hidden"
-                    />
-                  </label>
-
-                  <button
-                    type="button"
-                    onClick={handleSelectLiveMode}
-                    className="min-h-[48px] px-5 rounded-xl bg-[#6C5CE7]/15 hover:bg-[#6C5CE7]/25 border border-[#6C5CE7]/45 text-[#A29BFE] text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                  >
-                    <Radio className="w-4 h-4" />
-                    Transmitir en vivo
-                  </button>
-                </div>
-              </div>
-            )
-          ) : (
-            <img
-              src={visualPreset}
-              alt="Escena seleccionada"
-              referrerPolicy="no-referrer"
+          {cameraActive ? (
+            <video
+              ref={liveVideoRef}
+              muted
+              playsInline
               className="w-full h-full object-cover"
             />
+          ) : previewUrl ? (
+            <video
+              src={previewUrl}
+              autoPlay
+              loop
+              playsInline
+              onLoadedMetadata={(e) => {
+                const d = e.currentTarget.duration;
+                if (Number.isFinite(d) && d > 60) {
+                  setErrorMsg('El video supera los 60 segundos máximos permitidos.');
+                  handleResetCapture();
+                  return;
+                }
+                if (Number.isFinite(d) && d >= 3) {
+                  setDurationSec(Math.min(60, Math.round(d)));
+                }
+              }}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full bg-[#0F111A] flex flex-col items-center justify-center p-6 text-center space-y-5">
+              <Film className="w-11 h-11 text-[#6C5CE7]" />
+              <div className="space-y-1.5 max-w-xs">
+                <h2 className="font-display text-xl font-bold text-white">
+                  Graba o elige un video
+                </h2>
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Elige la duración (10s, 15s, 30s o 60s), sube un video desde tu dispositivo o transmite en vivo.
+                </p>
+              </div>
+
+              {errorMsg && (
+                <p className="max-w-xs text-xs text-rose-200 bg-[#E84393]/15 border border-[#E84393]/40 rounded-xl px-3.5 py-2.5">
+                  {errorMsg}
+                </p>
+              )}
+
+              <div className="w-full max-w-xs flex flex-col gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => void startCamera(false)}
+                  className="min-h-[48px] px-5 rounded-xl bg-neon-cta text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer"
+                >
+                  <Camera className="w-4 h-4" />
+                  Activar cámara
+                </button>
+
+                <label className="min-h-[48px] px-5 rounded-xl bg-[#161926] hover:bg-white/10 border border-[#00B4D8]/35 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer">
+                  <Upload className="w-4 h-4 text-[#00B4D8]" />
+                  Subir video
+                  <input
+                    type="file"
+                    accept="video/mp4,video/webm,video/quicktime,video/*"
+                    onChange={(ev) => void handleFilePick(ev)}
+                    className="hidden"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={handleSelectLiveMode}
+                  className="min-h-[48px] px-5 rounded-xl bg-[#6C5CE7]/15 hover:bg-[#6C5CE7]/25 border border-[#6C5CE7]/45 text-[#A29BFE] text-sm font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Radio className="w-4 h-4" />
+                  Transmitir en vivo
+                </button>
+              </div>
+            </div>
           )}
 
           {/* Subtle Top & Bottom Scrims */}
@@ -657,7 +640,7 @@ export function CreateClipModal({
               <X className="w-5 h-5" />
             </button>
 
-            {/* Mode Switcher */}
+            {/* Mode Switcher: Solo Video y En vivo */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-black/55 backdrop-blur-md border border-white/15">
               <button
                 type="button"
@@ -665,23 +648,9 @@ export function CreateClipModal({
                   setMode('video');
                   if (!previewUrl) void startCamera(true);
                 }}
-                className={`min-h-[34px] px-3 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-                  mode === 'video' ? 'bg-white text-zinc-950' : 'text-zinc-200 hover:text-white'
-                }`}
+                className="min-h-[34px] px-3 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer bg-white text-zinc-950"
               >
-                Cámara
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  stopCamera();
-                  setMode('preset');
-                }}
-                className={`min-h-[34px] px-3 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
-                  mode === 'preset' ? 'bg-white text-zinc-950' : 'text-zinc-200 hover:text-white'
-                }`}
-              >
-                Escena
+                Video
               </button>
               <button
                 type="button"
@@ -693,158 +662,109 @@ export function CreateClipModal({
               </button>
             </div>
 
-            {mode === 'video' ? (
-                <button
-                  type="button"
-                  onClick={() => setLowBitrateCapture((v) => !v)}
-                  className={`min-h-[36px] px-2.5 rounded-xl text-[11px] font-semibold backdrop-blur-md border transition-colors whitespace-nowrap cursor-pointer ${
-                    lowBitrateCapture
-                      ? 'bg-[#00B4D8] border-[#00B4D8] text-[#0F111A]'
-                      : 'bg-[#0F111A]/65 border-white/15 text-zinc-200'
-                  }`}
-                >
-                  {lowBitrateCapture ? '720 kbps' : '2.5 Mbps'}
-                </button>
-              ) : (
-                <div className="w-[44px]" />
-              )}
+            <button
+              type="button"
+              onClick={() => setLowBitrateCapture((v) => !v)}
+              className={`min-h-[36px] px-2.5 rounded-xl text-[11px] font-semibold backdrop-blur-md border transition-colors whitespace-nowrap cursor-pointer ${
+                lowBitrateCapture
+                  ? 'bg-[#00B4D8] border-[#00B4D8] text-[#0F111A]'
+                  : 'bg-[#0F111A]/65 border-white/15 text-zinc-200'
+              }`}
+            >
+              {lowBitrateCapture ? '720 kbps' : '2.5 Mbps'}
+            </button>
           </div>
 
           {/* Bottom Full-Screen Controls */}
           <div className="absolute bottom-0 inset-x-0 z-20 px-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-3">
-            {mode === 'video' ? (
-              cameraActive ? (
-                <div className="flex flex-col items-center gap-3">
-                  {/* Visual Countdown Timer */}
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0F111A]/85 border border-rose-500/40 backdrop-blur-md">
-                    <span
-                      className={`w-2 h-2 rounded-full bg-rose-500 ${
-                        isRecording ? 'animate-pulse' : ''
-                      }`}
+            {cameraActive ? (
+              <div className="flex flex-col items-center gap-3">
+                {/* Visual Countdown Timer */}
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0F111A]/85 border border-rose-500/40 backdrop-blur-md">
+                  <span
+                    className={`w-2 h-2 rounded-full bg-rose-500 ${
+                      isRecording ? 'animate-pulse' : ''
+                    }`}
+                  />
+                  <span className="font-mono text-sm font-bold tabular-nums text-rose-400">
+                    {isRecording
+                      ? formatTimerClock(remainingSeconds)
+                      : formatTimerClock(selectedMaxDuration)}
+                  </span>
+                </div>
+
+                {/* Duration Selector Buttons: 10s, 15s, 30s, 60s */}
+                <div
+                  role="group"
+                  aria-label="Duración máxima de grabación"
+                  className="flex items-center gap-1.5 p-1 rounded-xl bg-[#0F111A]/75 backdrop-blur-md border border-white/15"
+                >
+                  {RECORD_DURATION_OPTIONS.map((sec) => {
+                    const active = selectedMaxDuration === sec;
+                    return (
+                      <button
+                        key={sec}
+                        type="button"
+                        disabled={isRecording}
+                        onClick={() => setSelectedMaxDuration(sec)}
+                        className={`min-h-[32px] px-3 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer disabled:opacity-50 ${
+                          active
+                            ? 'bg-[#6C5CE7] text-white'
+                            : 'text-zinc-300 hover:text-white'
+                        }`}
+                      >
+                        {sec}s
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="w-full max-w-sm flex items-center justify-between gap-4">
+                  <label className="min-h-[44px] px-3.5 rounded-xl bg-[#0F111A]/70 hover:bg-[#0F111A]/90 backdrop-blur-md border border-white/15 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
+                    <Upload className="w-4 h-4 text-[#00B4D8]" />
+                    Subir video
+                    <input
+                      type="file"
+                      accept="video/mp4,video/webm,video/quicktime,video/*"
+                      onChange={(ev) => void handleFilePick(ev)}
+                      className="hidden"
                     />
-                    <span className="font-mono text-sm font-bold tabular-nums text-rose-400">
-                      {isRecording
-                        ? formatTimerClock(remainingSeconds)
-                        : formatTimerClock(selectedMaxDuration)}
-                    </span>
-                  </div>
+                  </label>
 
-                  {/* Duration Selector Buttons: 10s, 15s, 30s, 60s */}
-                  <div
-                    role="group"
-                    aria-label="Duración máxima de grabación"
-                    className="flex items-center gap-1.5 p-1 rounded-xl bg-[#0F111A]/75 backdrop-blur-md border border-white/15"
-                  >
-                    {RECORD_DURATION_OPTIONS.map((sec) => {
-                      const active = selectedMaxDuration === sec;
-                      return (
-                        <button
-                          key={sec}
-                          type="button"
-                          disabled={isRecording}
-                          onClick={() => setSelectedMaxDuration(sec)}
-                          className={`min-h-[32px] px-3 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer disabled:opacity-50 ${
-                            active
-                              ? 'bg-[#6C5CE7] text-white'
-                              : 'text-zinc-300 hover:text-white'
-                          }`}
-                        >
-                          {sec}s
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="w-full max-w-sm flex items-center justify-between gap-4">
-                    <label className="min-h-[44px] px-3.5 rounded-xl bg-[#0F111A]/70 hover:bg-[#0F111A]/90 backdrop-blur-md border border-white/15 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap">
-                      <Upload className="w-4 h-4 text-[#00B4D8]" />
-                      Subir
-                      <input
-                        type="file"
-                        accept="video/*,image/*"
-                        onChange={(ev) => void handleFilePick(ev)}
-                        className="hidden"
-                      />
-                    </label>
-
-                    <button
-                      type="button"
-                      onClick={handleToggleRecording}
-                      aria-label={isRecording ? 'Detener y continuar' : 'Grabar klip'}
-                      className={`w-18 h-18 rounded-full border-4 border-white flex items-center justify-center transition-transform cursor-pointer ${
-                        isRecording ? 'bg-[#E84393] scale-95' : 'bg-[#E84393] hover:scale-105'
-                      }`}
-                    >
-                      {isRecording ? <Square className="w-6 h-6 fill-white text-white" /> : null}
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        stopCamera();
-                        setMode('preset');
-                      }}
-                      className="min-h-[44px] px-3.5 rounded-xl bg-[#0F111A]/70 hover:bg-[#0F111A]/90 backdrop-blur-md border border-white/15 text-white text-xs font-semibold whitespace-nowrap cursor-pointer"
-                    >
-                      Escenas
-                    </button>
-                  </div>
-                </div>
-              ) : previewUrl ? (
-                <div className="max-w-md mx-auto flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={handleResetCapture}
-                    className="min-h-[48px] px-4 rounded-xl bg-[#0F111A]/75 hover:bg-[#0F111A] backdrop-blur-md border border-white/20 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                    onClick={handleToggleRecording}
+                    aria-label={isRecording ? 'Detener y continuar' : 'Grabar video'}
+                    className={`w-18 h-18 rounded-full border-4 border-white flex items-center justify-center transition-transform cursor-pointer ${
+                      isRecording ? 'bg-[#E84393] scale-95' : 'bg-[#E84393] hover:scale-105'
+                    }`}
                   >
-                    <RotateCcw className="w-4 h-4" />
-                    Regrabar
+                    {isRecording ? <Square className="w-6 h-6 fill-white text-white" /> : null}
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleProceedToDetails}
-                    className="flex-1 min-h-[48px] px-6 rounded-xl bg-neon-cta text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all cursor-pointer"
-                  >
-                    Continuar
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : null
-            ) : (
-              <div className="max-w-md mx-auto space-y-3">
-                <div className="grid grid-cols-5 gap-2">
-                  {VISUAL_PRESETS.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => setVisualPreset(preset.imageUrl)}
-                      title={preset.label}
-                      className={`aspect-[9/14] rounded-xl overflow-hidden border-2 transition-all cursor-pointer ${
-                        visualPreset === preset.imageUrl
-                          ? 'border-[#00B4D8] scale-[1.03]'
-                          : 'border-white/20 opacity-75 hover:opacity-100'
-                      }`}
-                    >
-                      <img
-                        src={preset.imageUrl}
-                        alt={preset.label}
-                        referrerPolicy="no-referrer"
-                        className="w-full h-full object-cover"
-                      />
-                    </button>
-                  ))}
-                </div>
 
+                  <div className="w-[96px]" aria-hidden="true" />
+                </div>
+              </div>
+            ) : previewUrl ? (
+              <div className="max-w-md mx-auto flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleResetCapture}
+                  className="min-h-[48px] px-4 rounded-xl bg-[#0F111A]/75 hover:bg-[#0F111A] backdrop-blur-md border border-white/20 text-white text-sm font-semibold inline-flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  Regrabar
+                </button>
                 <button
                   type="button"
                   onClick={handleProceedToDetails}
-                  className="w-full min-h-[48px] px-6 rounded-xl bg-neon-cta text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all cursor-pointer"
+                  className="flex-1 min-h-[48px] px-6 rounded-xl bg-neon-cta text-white text-sm font-semibold inline-flex items-center justify-center gap-2 transition-all cursor-pointer"
                 >
                   Continuar
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -886,25 +806,17 @@ export function CreateClipModal({
             {/* Compact Clip Summary */}
             <div className="flex items-center gap-4 p-3 rounded-2xl bg-[#161926] border border-white/10">
               <div className="w-14 aspect-[9/14] rounded-xl overflow-hidden bg-[#0F111A] border border-white/10 shrink-0">
-                {mode === 'video' && previewUrl ? (
-                  mediaKind === 'image' ? (
-                    <img
-                      src={previewUrl}
-                      alt="Vista previa de imagen"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <video
-                      src={previewUrl}
-                      muted
-                      playsInline
-                      className="w-full h-full object-cover"
-                    />
-                  )
+                {previewUrl ? (
+                  <video
+                    src={previewUrl}
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
                   <img
                     src={visualPreset}
-                    alt="Vista previa del klip"
+                    alt="Vista previa del video"
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
                   />
@@ -912,11 +824,7 @@ export function CreateClipModal({
               </div>
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="text-sm font-semibold text-white">
-                  {mode === 'video' && previewUrl
-                    ? mediaKind === 'image'
-                      ? 'Imagen lista para publicar'
-                      : 'Video listo para publicar'
-                    : 'Escena visual + audio'}
+                  Video listo para publicar
                 </p>
                 <p className="text-xs text-zinc-400 font-mono tabular-nums">
                   {durationSec} s · {lowBitrateCapture ? 'Ahorro 720 kbps' : 'Estándar 2.5 Mbps'}

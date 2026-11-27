@@ -45,6 +45,11 @@
         "isPublic": {
           "type": "boolean"
         },
+        "fcmToken": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "Primary FCM registration token stored on login for push notifications."
+        },
         "fcmTokenWeb": {
           "type": "string",
           "maxLength": 512
@@ -75,6 +80,10 @@
         "isAdmin": {
           "type": "boolean",
           "description": "Administrator privilege flag provisioned server-side or via console; never user-writable."
+        },
+        "isVerified": {
+          "type": "boolean",
+          "description": "Account verification badge flag updated exclusively by admins."
         },
         "coins": {
           "type": "number",
@@ -301,6 +310,11 @@
           "type": "string",
           "maxLength": 300
         },
+        "mediaType": {
+          "type": "string",
+          "enum": ["video"],
+          "description": "Strict media type ensuring all published clips are videos."
+        },
         "durationSec": {
           "type": "number"
         },
@@ -322,6 +336,10 @@
         },
         "sharesCount": {
           "type": "number"
+        },
+        "replaysCount": {
+          "type": "number",
+          "description": "Number of times viewers looped/repeated watching the clip."
         },
         "createdAt": {
           "type": "string",

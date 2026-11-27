@@ -30,6 +30,7 @@ import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
 import type { LiveClubConfigTab } from './LiveClubConfiguratorModal';
 import { LiveHostSettingsSheet } from './LiveHostSettingsSheet';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 
 interface LiveHostScreenProps {
   currentUser: UserProfile;
@@ -200,10 +201,11 @@ export function LiveHostScreen({
             </div>
 
             <div className="min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
                 <p className="text-sm font-bold text-white truncate leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,0.85)]">
                   {currentUser.displayName || currentUser.username}
                 </p>
+                {isAccountVerified(currentUser) && <VerifiedBadge size={16} />}
                 <span className="text-[10px] font-mono font-bold text-[#00B4D8] tabular-nums shrink-0">
                   {formatLiveDuration(liveSeconds)}
                 </span>

@@ -19,7 +19,9 @@ import {
   getDoc,
   getDocs,
   increment,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   serverTimestamp,
   setDoc,
@@ -214,6 +216,7 @@ function toMillis(val: unknown): number {
 }
 
 function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
+  const rawMediaType = typeof data.mediaType === 'string' ? data.mediaType.trim().toLowerCase() : '';
   return {
     id: String(data.id || id),
     authorId: String(data.authorId || ''),
@@ -227,6 +230,7 @@ function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
     audioPreset: typeof data.audioPreset === 'string' ? data.audioPreset : '',
     visualPreset: String(data.visualPreset || ''),
     videoUrl: sanitizeMediaUrl(typeof data.videoUrl === 'string' ? data.videoUrl : ''),
+    mediaType: !rawMediaType || rawMediaType === 'video' ? 'video' : undefined,
     durationSec: Number(data.durationSec || 15),
     hasLocalMedia: Boolean(data.hasLocalMedia),
     visibility: (data.visibility || 'public') as ClipVisibility,
@@ -234,6 +238,7 @@ function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
     bookmarksCount: Number(data.bookmarksCount || 0),
     viewsCount: Number(data.viewsCount || 0),
     sharesCount: Number(data.sharesCount || 0),
+    replaysCount: Number(data.replaysCount || 0),
     createdAtMs: toMillis(data.createdAt),
     isStarter: false,
   };
@@ -511,6 +516,7 @@ function buildFallbackProfile(
     avatarUrl: sanitizeAvatarUrl(user.photoURL),
     isPublic: true,
     isAdmin: false,
+    isVerified: false,
     followersCount: 0,
     coins: 0,
     freeRoses: 0,
@@ -635,7 +641,14 @@ async function ensureUserProfileInternal(
       avatarUrl: String(d.avatarUrl || ''),
       isPublic: Boolean(d.isPublic ?? true),
       isAdmin: Boolean(d.isAdmin ?? false),
+      isVerified: Boolean(d.isVerified ?? false),
       followersCount: typeof d.followersCount === 'number' ? d.followersCount : 0,
+      fcmToken:
+        typeof d.fcmToken === 'string'
+          ? d.fcmToken
+          : typeof d.fcmTokenWeb === 'string'
+            ? d.fcmTokenWeb
+            : undefined,
       fcmTokenWeb: typeof d.fcmTokenWeb === 'string' ? d.fcmTokenWeb : undefined,
       presenceStatus,
       mutedCommunityChat: Boolean(d.mutedCommunityChat ?? false),
@@ -851,26 +864,248 @@ export async function updateUserPrivateInfo(
   }
 }
 
+export const ELITE_MIN_FOLLOWERS = 2000;
+
+export interface EliteCommunitySnapshot {
+  loading: boolean;
+  creators: CreatorSummary[];
+  clips: ClipItem[];
+}
+
 export function subscribePublicClips(
   onData: (clips: ClipItem[]) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db, 'clips'),
-    where('visibility', '==', 'public'),
-  );
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const items: ClipItem[] = snapshot.docs.map((d) =>
-        mapClipDoc(d.id, d.data() as Record<string, unknown>),
+  let disposed = false;
+  let activeUnsub: Unsubscribe | null = null;
+
+  const start = (useServerOrder: boolean) => {
+    const q = useServerOrder
+      ? query(
+          collection(db, 'clips'),
+          where('visibility', '==', 'public'),
+          orderBy('createdAt', 'desc'),
+        )
+      : query(
+          collection(db, 'clips'),
+          where('visibility', '==', 'public'),
+        );
+
+    activeUnsub = onSnapshot(
+      q,
+      (snapshot) => {
+        if (disposed) return;
+        const items: ClipItem[] = snapshot.docs
+          .map((d) => mapClipDoc(d.id, d.data() as Record<string, unknown>))
+          .filter((item) => item.mediaType === 'video');
+        items.sort((a, b) => b.createdAtMs - a.createdAtMs);
+        onData(items);
+      },
+      (err) => {
+        if (disposed) return;
+        const code = (err as { code?: string })?.code;
+        if (useServerOrder && code === 'failed-precondition') {
+          start(false);
+          return;
+        }
+        handleFirestoreError(err, OperationType.LIST, 'clips');
+      },
+    );
+  };
+
+  start(true);
+  return () => {
+    disposed = true;
+    activeUnsub?.();
+  };
+}
+
+export function subscribeEliteCommunityClips(
+  onData: (snapshot: EliteCommunitySnapshot) => void,
+): Unsubscribe {
+  let disposed = false;
+  let usersUnsub: Unsubscribe | null = null;
+  let clipUnsubs: Unsubscribe[] = [];
+  let lastUidKey = '';
+  let latestTopUsers: CreatorSummary[] = [];
+  const chunkResults = new Map<number, ClipItem[]>();
+  const loadedChunks = new Set<number>();
+  let totalChunks = 0;
+
+  onData({ loading: true, creators: [], clips: [] });
+
+  const cleanupClipSubscriptions = () => {
+    clipUnsubs.forEach((unsub) => unsub());
+    clipUnsubs = [];
+    chunkResults.clear();
+    loadedChunks.clear();
+    totalChunks = 0;
+  };
+
+  const emitMergedClips = () => {
+    if (disposed) return;
+    const rankMap = new Map<
+      string,
+      { followersCount: number; isVerified: boolean }
+    >();
+    latestTopUsers.forEach((creator) => {
+      const followers = creator.followersCount ?? 0;
+      rankMap.set(creator.uid, {
+        followersCount: followers,
+        isVerified: Boolean(creator.isVerified) || followers >= 10000,
+      });
+    });
+
+    const merged: ClipItem[] = [];
+    chunkResults.forEach((items) => {
+      items.forEach((clip) => {
+        const creatorMeta = rankMap.get(clip.authorId);
+        if (!creatorMeta || clip.mediaType !== 'video') return;
+        merged.push({
+          ...clip,
+          authorVerified: creatorMeta.isVerified,
+          authorFollowersCount: creatorMeta.followersCount,
+        });
+      });
+    });
+
+    merged.sort((a, b) => {
+      const followersDiff =
+        (rankMap.get(b.authorId)?.followersCount ?? 0) -
+        (rankMap.get(a.authorId)?.followersCount ?? 0);
+      if (followersDiff !== 0) return followersDiff;
+      return b.createdAtMs - a.createdAtMs;
+    });
+
+    onData({
+      loading: totalChunks > 0 && loadedChunks.size < totalChunks,
+      creators: latestTopUsers,
+      clips: merged,
+    });
+  };
+
+  const subscribeClipsForTopUsers = (topUsers: CreatorSummary[]) => {
+    latestTopUsers = topUsers;
+    const nextUidKey = topUsers.map((u) => u.uid).join(',');
+
+    if (topUsers.length === 0) {
+      lastUidKey = '';
+      cleanupClipSubscriptions();
+      onData({ loading: false, creators: [], clips: [] });
+      return;
+    }
+
+    if (nextUidKey === lastUidKey && clipUnsubs.length > 0) {
+      emitMergedClips();
+      return;
+    }
+
+    lastUidKey = nextUidKey;
+    cleanupClipSubscriptions();
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < topUsers.length; i += 10) {
+      chunks.push(topUsers.slice(i, i + 10).map((u) => u.uid));
+    }
+    totalChunks = chunks.length;
+
+    chunks.forEach((uidChunk, chunkIdx) => {
+      const clipsQuery = query(
+        collection(db, 'clips'),
+        where('visibility', '==', 'public'),
+        where('authorId', 'in', uidChunk),
       );
-      items.sort((a, b) => b.createdAtMs - a.createdAtMs);
-      onData(items);
-    },
-    (err) => {
-      handleFirestoreError(err, OperationType.LIST, 'clips');
-    },
-  );
+      const unsub = onSnapshot(
+        clipsQuery,
+        (snap) => {
+          if (disposed) return;
+          const items = snap.docs
+            .map((d) => mapClipDoc(d.id, d.data() as Record<string, unknown>))
+            .filter((item) => item.mediaType === 'video');
+          chunkResults.set(chunkIdx, items);
+          loadedChunks.add(chunkIdx);
+          emitMergedClips();
+        },
+        (err) => {
+          if (disposed) return;
+          loadedChunks.add(chunkIdx);
+          emitMergedClips();
+          handleFirestoreError(err, OperationType.LIST, 'clips');
+        },
+      );
+      clipUnsubs.push(unsub);
+    });
+  };
+
+  const startUsersQuery = (useIndexedQuery: boolean) => {
+    const usersQuery = useIndexedQuery
+      ? query(
+          collection(db, 'users'),
+          where('isPublic', '==', true),
+          where('followersCount', '>=', ELITE_MIN_FOLLOWERS),
+          orderBy('followersCount', 'desc'),
+          limit(20),
+        )
+      : query(
+          collection(db, 'users'),
+          where('isPublic', '==', true),
+        );
+
+    usersUnsub = onSnapshot(
+      usersQuery,
+      (snap) => {
+        if (disposed) return;
+        const eliteCreators: CreatorSummary[] = snap.docs
+          .map((d) => {
+            const data = d.data();
+            const followers =
+              typeof data.followersCount === 'number' && Number.isFinite(data.followersCount)
+                ? Math.max(0, Math.floor(data.followersCount))
+                : 0;
+            return {
+              uid: String(data.uid || d.id),
+              username: String(data.username || 'creador'),
+              displayName: String(data.displayName || 'Creador'),
+              bio: String(data.bio || 'Creador en Viroklipz'),
+              avatarUrl: String(data.avatarUrl || ''),
+              followersLabel: followers > 0 ? String(followers) : '',
+              followersCount: followers,
+              isVerified: Boolean(data.isVerified ?? false) || followers >= 10000,
+              fanLevel:
+                typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
+                  ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
+                  : 1,
+            };
+          })
+          .filter((u) => (u.followersCount ?? 0) >= ELITE_MIN_FOLLOWERS)
+          .sort((a, b) => (b.followersCount ?? 0) - (a.followersCount ?? 0))
+          .slice(0, 20);
+
+        subscribeClipsForTopUsers(eliteCreators);
+      },
+      (err) => {
+        if (disposed) return;
+        const code = (err as { code?: string })?.code;
+        if (useIndexedQuery && code === 'failed-precondition') {
+          console.warn(
+            'Índice compuesto para ranking Comunidad no disponible aún; usando fallback ordenado.',
+            err,
+          );
+          startUsersQuery(false);
+          return;
+        }
+        onData({ loading: false, creators: [], clips: [] });
+        handleFirestoreError(err, OperationType.LIST, 'users');
+      },
+    );
+  };
+
+  startUsersQuery(true);
+
+  return () => {
+    disposed = true;
+    usersUnsub?.();
+    cleanupClipSubscriptions();
+  };
 }
 
 export function subscribeUserPrivateClips(
@@ -1193,6 +1428,10 @@ export async function publishClip(
 
   const resolvedMime =
     input.mediaMimeType || (input.mediaBlob?.type ? input.mediaBlob.type : 'video/mp4');
+  if (resolvedMime.startsWith('image/') || !resolvedMime.startsWith('video/')) {
+    throw new Error('Solo se permite publicar videos en Viroklipz.');
+  }
+
   const resolvedBytes =
     input.mediaBytes && input.mediaBytes.byteLength > 0
       ? input.mediaBytes
@@ -1200,31 +1439,33 @@ export async function publishClip(
         ? new Uint8Array(await input.mediaBlob.arrayBuffer())
         : null;
 
-  if (resolvedBytes && resolvedBytes.byteLength > 0) {
-    if (resolvedBytes.byteLength > MAX_VIDEO_FILE_BYTES) {
-      throw new Error('El archivo supera el límite máximo permitido.');
-    }
-    const r2Url = await uploadClipToR2IfConfigured(clipId, resolvedBytes, resolvedMime);
-    if (r2Url) {
-      videoUrl = r2Url;
+  if (!resolvedBytes || resolvedBytes.byteLength === 0) {
+    throw new Error('Debes grabar o seleccionar un video válido antes de publicar.');
+  }
+
+  if (resolvedBytes.byteLength > MAX_VIDEO_FILE_BYTES) {
+    throw new Error('El video supera el límite máximo permitido.');
+  }
+  const r2Url = await uploadClipToR2IfConfigured(clipId, resolvedBytes, resolvedMime);
+  if (r2Url) {
+    videoUrl = r2Url;
+  } else {
+    const firebaseStorageUrl = await uploadClipBytesToFirebaseStorage(
+      profile.uid,
+      clipId,
+      resolvedBytes,
+      resolvedMime,
+    );
+    if (firebaseStorageUrl) {
+      videoUrl = firebaseStorageUrl;
     } else {
-      const firebaseStorageUrl = await uploadClipBytesToFirebaseStorage(
-        profile.uid,
-        clipId,
-        resolvedBytes,
-        resolvedMime,
-      );
-      if (firebaseStorageUrl) {
-        videoUrl = firebaseStorageUrl;
-      } else {
-        await Promise.race([
-          saveClipMediaBlob(clipId, resolvedBytes, resolvedMime),
-          new Promise<never>((_, reject) => {
-            window.setTimeout(() => reject(new Error('Timeout saving local media')), 12000);
-          }),
-        ]);
-        hasLocalMedia = true;
-      }
+      await Promise.race([
+        saveClipMediaBlob(clipId, resolvedBytes, resolvedMime),
+        new Promise<never>((_, reject) => {
+          window.setTimeout(() => reject(new Error('Timeout saving local media')), 12000);
+        }),
+      ]);
+      hasLocalMedia = true;
     }
   }
 
@@ -1249,6 +1490,7 @@ export async function publishClip(
       audioPreset: resolvedAudioPreset,
       visualPreset: input.visualPreset.slice(0, MAX_VISUAL_PRESET_LEN),
       videoUrl,
+      mediaType: 'video',
       durationSec: Math.min(60, Math.max(3, Math.round(input.durationSec))),
       hasLocalMedia,
       visibility: resolvedVisibility,
@@ -1256,6 +1498,7 @@ export async function publishClip(
       bookmarksCount: 0,
       viewsCount: 0,
       sharesCount: 0,
+      replaysCount: 0,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -1302,6 +1545,20 @@ export async function registerClipView(clip: ClipItem): Promise<void> {
   } catch (err) {
     // Non-blocking view telemetry
     console.warn('View count update skipped:', path, err);
+  }
+}
+
+export async function registerClipReplay(clip: ClipItem): Promise<void> {
+  if (clip.isStarter || clip.visibility !== 'public') return;
+  if (!auth.currentUser) return;
+  const path = `clips/${clip.id}`;
+  try {
+    await updateDoc(doc(db, 'clips', clip.id), {
+      replaysCount: increment(1),
+    });
+  } catch (err) {
+    // Non-blocking replay telemetry
+    console.warn('Replay count update skipped:', path, err);
   }
 }
 
@@ -1629,6 +1886,7 @@ export async function saveUserFcmTokenWeb(uid: string, token: string): Promise<v
   const path = `users/${uid}`;
   try {
     await updateDoc(doc(db, 'users', uid), {
+      fcmToken: cleanToken,
       fcmTokenWeb: cleanToken,
       updatedAt: serverTimestamp(),
     });
@@ -1636,6 +1894,8 @@ export async function saveUserFcmTokenWeb(uid: string, token: string): Promise<v
     handleFirestoreError(err, OperationType.UPDATE, path);
   }
 }
+
+export const saveUserFcmToken = saveUserFcmTokenWeb;
 
 export function subscribeHashtagSearchClips(
   hashtag: string,
@@ -1696,6 +1956,11 @@ export function subscribeUsernamePrefixSearch(
             typeof data.followersCount === 'number' && data.followersCount > 0
               ? String(data.followersCount)
               : '',
+          followersCount:
+            typeof data.followersCount === 'number' && Number.isFinite(data.followersCount)
+              ? Math.max(0, Math.floor(data.followersCount))
+              : 0,
+          isVerified: Boolean(data.isVerified ?? false),
           fanLevel:
             typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
               ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
@@ -1730,7 +1995,15 @@ export function subscribePublicUsers(
           displayName: String(data.displayName || 'Creador'),
           bio: String(data.bio || 'Creador en Viroklipz'),
           avatarUrl: String(data.avatarUrl || ''),
-          followersLabel: '',
+          followersLabel:
+            typeof data.followersCount === 'number' && data.followersCount > 0
+              ? String(data.followersCount)
+              : '',
+          followersCount:
+            typeof data.followersCount === 'number' && Number.isFinite(data.followersCount)
+              ? Math.max(0, Math.floor(data.followersCount))
+              : 0,
+          isVerified: Boolean(data.isVerified ?? false),
           fanLevel:
             typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
               ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
@@ -3003,6 +3276,7 @@ export interface WalletSnapshot {
   welcomeRechargeClaimed: boolean;
   followersCount: number;
   isAdmin: boolean;
+  isVerified: boolean;
 }
 
 export function subscribeUserWallet(
@@ -3030,6 +3304,7 @@ export function subscribeUserWallet(
             ? Math.max(0, Math.floor(d.followersCount))
             : 0,
         isAdmin: Boolean(d.isAdmin ?? false),
+        isVerified: Boolean(d.isVerified ?? false),
       });
     },
     (err) => {

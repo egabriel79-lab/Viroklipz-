@@ -74,6 +74,7 @@ import type {
   UserStreak,
 } from '../types/viroklipz';
 import { AvatarImg } from './AvatarImg';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 
 interface ChatViewProps {
   currentUser: UserProfile | null;
@@ -536,6 +537,17 @@ export function ChatView({
       }
     );
   }, [allKnownCreators, selectedPeerId]);
+
+  const verifiedUids = useMemo(() => {
+    const set = new Set<string>();
+    allKnownCreators.forEach((c) => {
+      if (isAccountVerified(c)) set.add(c.uid);
+    });
+    if (isAccountVerified(currentUser)) {
+      set.add(currentUser!.uid);
+    }
+    return set;
+  }, [allKnownCreators, currentUser]);
 
   const ownClips = useMemo(
     () =>
@@ -1843,6 +1855,7 @@ export function ChatView({
                     <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
                       {selectedPeer.displayName}
                     </p>
+                    {isAccountVerified(selectedPeer) && <VerifiedBadge size={16} />}
                     <span
                       title={`Racha de chat: ${activeThreadStreak} ${activeThreadStreak === 1 ? 'día' : 'días'}`}
                       className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs font-mono font-bold tabular-nums shrink-0 ${
@@ -2088,10 +2101,11 @@ export function ChatView({
                   </button>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate">
-                        @{msg.authorUsername}
+                      <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 inline-flex items-center gap-1 min-w-0">
+                        <span className="truncate">@{msg.authorUsername}</span>
+                        {verifiedUids.has(msg.authorId) && <VerifiedBadge size={16} />}
                         {msg.createdAtMs ? (
-                          <span className="ml-1.5 font-normal text-zinc-500">
+                          <span className="ml-0.5 font-normal text-zinc-500 whitespace-nowrap">
                             · {formatShortTime(msg.createdAtMs)}
                           </span>
                         ) : null}
@@ -2458,6 +2472,7 @@ export function ChatView({
                       <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
                         {row.peer.displayName}
                       </p>
+                      {isAccountVerified(row.peer) && <VerifiedBadge size={16} />}
                       {(row.thread?.streak ?? 0) > 0 && (
                         <span
                           className={`inline-flex items-center gap-0.5 text-[11px] font-mono font-bold tabular-nums shrink-0 ${
@@ -2782,8 +2797,9 @@ export function ChatView({
               </div>
 
               <div className="px-1 space-y-0.5 max-w-full">
-                <p className="text-sm font-bold text-white drop-shadow">
-                  @{activeStorySlide.authorUsername}
+                <p className="text-sm font-bold text-white drop-shadow flex items-center gap-1.5 min-w-0">
+                  <span className="truncate">@{activeStorySlide.authorUsername}</span>
+                  {verifiedUids.has(activeStorySlide.authorId) && <VerifiedBadge size={16} />}
                 </p>
                 {activeStorySlide.caption && (
                   <p className="text-xs text-white/85 line-clamp-2 drop-shadow">

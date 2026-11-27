@@ -136,8 +136,49 @@ export function validateClipMediaFile(
   };
 }
 
+export function validateClipVideoFile(
+  file: File,
+): { ok: true; kind: 'video'; mimeType: string } | { ok: false; message: string } {
+  const lowerName = file.name.toLowerCase();
+  const isVideoExt =
+    lowerName.endsWith('.mp4') ||
+    lowerName.endsWith('.webm') ||
+    lowerName.endsWith('.mov') ||
+    lowerName.endsWith('.m4v') ||
+    lowerName.endsWith('.3gp');
+
+  const isVideoMime =
+    ALLOWED_VIDEO_MIME_TYPES.includes(file.type as (typeof ALLOWED_VIDEO_MIME_TYPES)[number]) ||
+    file.type.startsWith('video/');
+
+  if (!isVideoMime && !isVideoExt) {
+    return {
+      ok: false,
+      message: 'Solo se permiten videos (.mp4, .webm, .mov). Las imágenes no están permitidas.',
+    };
+  }
+  if (file.size <= 0) {
+    return {
+      ok: false,
+      message: 'El video seleccionado está vacío.',
+    };
+  }
+  if (file.size > MAX_VIDEO_FILE_BYTES) {
+    return {
+      ok: false,
+      message: `El video supera el límite máximo de ${MAX_VIDEO_FILE_MB} MB.`,
+    };
+  }
+
+  return {
+    ok: true,
+    kind: 'video',
+    mimeType: file.type || 'video/mp4',
+  };
+}
+
 export function validateVideoFile(file: File): { ok: true } | { ok: false; message: string } {
-  const res = validateClipMediaFile(file);
+  const res = validateClipVideoFile(file);
   if (!res.ok) return res;
   return { ok: true };
 }

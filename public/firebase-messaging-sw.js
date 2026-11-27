@@ -14,25 +14,40 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  const title = payload?.notification?.title || 'Viroklipz';
-  const body = payload?.notification?.body || 'Tienes nueva actividad en Viroklipz.';
+  const title = payload?.notification?.title || payload?.data?.title || 'Viroklipz';
+  const body =
+    payload?.notification?.body ||
+    payload?.data?.body ||
+    'Tienes nueva actividad en Viroklipz.';
   const targetUrl = payload?.data?.url || '/';
+  const tag = payload?.data?.type ? `viroklipz-${payload.data.type}` : 'viroklipz-push';
 
-  self.registration.showNotification(title, {
+  return self.registration.showNotification(title, {
     body,
     icon: '/pwa-192x192.png',
     badge: '/pwa-192x192.png',
-    data: { url: targetUrl },
+    tag,
+    data: {
+      ...(payload?.data || {}),
+      url: targetUrl,
+    },
   });
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+  const notifData = event.notification.data || {};
+  const targetUrl = typeof notifData.url === 'string' && notifData.url ? notifData.url : '/';
+
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
       for (const client of windowClients) {
         if ('focus' in client) {
+          client.postMessage({
+            type: 'VIROKLIPZ_NOTIFICATION_CLICK',
+            url: targetUrl,
+            data: notifData,
+          });
           return client.focus();
         }
       }

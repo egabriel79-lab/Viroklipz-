@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Eye, Radio } from 'lucide-react';
 import type { LiveStreamItem } from './LiveStreamsScreen';
 import { AvatarImg } from './AvatarImg';
+import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
 
 interface LiveFeedSlideProps {
   stream: LiveStreamItem;
@@ -121,8 +122,9 @@ export function LiveFeedSlide({
               />
             </div>
             <div className="min-w-0">
-              <p className="font-display font-bold text-sm text-white group-hover:underline truncate drop-shadow">
-                @{stream.creator.username}
+              <p className="font-display font-bold text-sm text-white group-hover:underline flex items-center gap-1.5 min-w-0 drop-shadow">
+                <span className="truncate">@{stream.creator.username}</span>
+                {isAccountVerified(stream.creator) && <VerifiedBadge size={16} />}
               </p>
               <p className="text-xs text-white/85 truncate drop-shadow">
                 {stream.streamTitle}
