@@ -279,7 +279,7 @@ function ViroklipzApp() {
     return () => unsub();
   }, [showToast]);
 
-  // Real-time wallet balance sync (coins, freeRoses, welcomeRechargeClaimed)
+  // Real-time wallet balance & Live access sync (coins, freeRoses, welcomeRechargeClaimed, followersCount, isAdmin)
   useEffect(() => {
     if (!authReady || !currentUser?.uid) return;
     const unsubWallet = subscribeUserWallet(currentUser.uid, (wallet) => {
@@ -290,6 +290,8 @@ function ViroklipzApp() {
               coins: wallet.coins,
               freeRoses: wallet.freeRoses,
               welcomeRechargeClaimed: wallet.welcomeRechargeClaimed,
+              followersCount: wallet.followersCount,
+              isAdmin: wallet.isAdmin,
             }
           : prev,
       );
@@ -314,17 +316,18 @@ function ViroklipzApp() {
 
   // Authenticated user reactions, blocked accounts, streak, statusNotes & private clips listeners
   useEffect(() => {
-    if (!authReady || !currentUser) return;
+    const uid = currentUser?.uid;
+    if (!authReady || !uid) return;
     const unsubReactions = subscribeUserReactions(
-      currentUser.uid,
+      uid,
       setLikedIds,
       setBookmarkedIds,
       setFollowingIds,
     );
-    const unsubPrivate = subscribeUserPrivateClips(currentUser.uid, setPrivateClips);
-    const unsubPrivateInfo = subscribeUserPrivateInfo(currentUser.uid, setPrivateInfo);
-    const unsubStreak = subscribeUserStreak(currentUser.uid, setUserStreak);
-    const unsubBlocked = subscribeUserBlocked(currentUser.uid, setBlockedUsers);
+    const unsubPrivate = subscribeUserPrivateClips(uid, setPrivateClips);
+    const unsubPrivateInfo = subscribeUserPrivateInfo(uid, setPrivateInfo);
+    const unsubStreak = subscribeUserStreak(uid, setUserStreak);
+    const unsubBlocked = subscribeUserBlocked(uid, setBlockedUsers);
     const unsubNotes = subscribeStatusNotes(setStatusNotes);
     return () => {
       unsubReactions();
@@ -334,7 +337,7 @@ function ViroklipzApp() {
       unsubBlocked();
       unsubNotes();
     };
-  }, [authReady, currentUser]);
+  }, [authReady, currentUser?.uid]);
 
   // Register FCM Web Push permission + Service Worker + foreground message listener on sign-in
   useEffect(() => {
@@ -852,7 +855,8 @@ function ViroklipzApp() {
       description = 'Conversa en vivo con otros creadores de Viroklipz.';
     } else if (section === 'feed' && activeClip) {
       title = `${activeClip.authorDisplayName}: ${activeClip.caption.slice(0, 54)} | Viroklipz`;
-      description = `${activeClip.caption} · #${activeClip.category} en Viroklipz.`;
+      const catSuffix = activeClip.category ? ` · #${activeClip.category}` : '';
+      description = `${activeClip.caption}${catSuffix} en Viroklipz.`;
       canonicalPath = `/klip/${encodeURIComponent(activeClip.id)}`;
     }
 

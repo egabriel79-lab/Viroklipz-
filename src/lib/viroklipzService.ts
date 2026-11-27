@@ -42,10 +42,12 @@ import { deleteClipMediaBlob, saveClipMediaBlob } from './mediaStorage';
 import {
   ALLOWED_CATEGORIES,
   createSafeId,
+  MAX_AUDIO_PRESET_LEN,
   MAX_AUDIO_TITLE_LEN,
   MAX_BIO_COLOR_LEN,
   MAX_BIO_LEN,
   MAX_CAPTION_LEN,
+  MAX_CATEGORY_LEN,
   MAX_COMMENT_LEN,
   MAX_DISPLAY_NAME_LEN,
   MAX_EMAIL_LEN,
@@ -219,10 +221,10 @@ function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
     authorDisplayName: String(data.authorDisplayName || 'Creador'),
     authorAvatarUrl: String(data.authorAvatarUrl || ''),
     caption: String(data.caption || ''),
-    category: (data.category || 'general') as ClipCategory,
+    category: typeof data.category === 'string' ? data.category : '',
     hashtags: Array.isArray(data.hashtags) ? data.hashtags.map(String) : [],
-    audioTitle: String(data.audioTitle || 'Audio original'),
-    audioPreset: (data.audioPreset || 'urban_beat') as AudioPreset,
+    audioTitle: typeof data.audioTitle === 'string' ? data.audioTitle : '',
+    audioPreset: typeof data.audioPreset === 'string' ? data.audioPreset : '',
     visualPreset: String(data.visualPreset || ''),
     videoUrl: sanitizeMediaUrl(typeof data.videoUrl === 'string' ? data.videoUrl : ''),
     durationSec: Number(data.durationSec || 15),
@@ -237,7 +239,7 @@ function mapClipDoc(id: string, data: Record<string, unknown>): ClipItem {
   };
 }
 
-function extractAuthErrorCode(err: unknown): string {
+export function extractAuthErrorCode(err: unknown): string {
   if (typeof err === 'object' && err !== null && 'code' in err) {
     return String((err as { code?: unknown }).code || '');
   }
@@ -258,10 +260,12 @@ function canUseRedirectFallback(): boolean {
 }
 
 const GOOGLE_PENDING_SIGNUP_KEY = 'viroklipz_google_pending_signup';
+let pendingGoogleSignupOverrides: EnsureProfileOverrides | null = null;
 
 export async function signInWithGoogle(
   overrides?: EnsureProfileOverrides,
 ): Promise<UserProfile | null> {
+  pendingGoogleSignupOverrides = overrides ?? null;
   try {
     const result = await signInWithPopup(auth, googleProvider);
     return await ensureUserProfile(result.user, overrides);
@@ -284,6 +288,10 @@ export async function signInWithGoogle(
       return null;
     }
     throw err;
+  } finally {
+    if (pendingGoogleSignupOverrides === (overrides ?? null)) {
+      pendingGoogleSignupOverrides = null;
+    }
   }
 }
 
@@ -372,7 +380,9 @@ export async function signUpWithEmail(input: {
     }
     return await ensureUserProfile(credential.user, overrides);
   } finally {
-    pendingSignupOverridesByEmail.delete(cleanEmail);
+    if (pendingSignupOverridesByEmail.get(cleanEmail) === overrides) {
+      pendingSignupOverridesByEmail.delete(cleanEmail);
+    }
   }
 }
 
@@ -390,7 +400,10 @@ export async function resetUserPassword(email: string): Promise<void> {
   await sendPasswordResetEmail(auth, cleanEmail);
 }
 
-export function mapAuthErrorMessage(err: unknown): string {
+export function mapAuthErrorMessage(
+  err: unknown,
+  provider?: 'email' | 'google',
+): string {
   const code = extractAuthErrorCode(err);
   const host = typeof window !== 'undefined' ? window.location.hostname : '';
   switch (code) {
@@ -412,6 +425,9 @@ export function mapAuthErrorMessage(err: unknown): string {
     case 'auth/operation-not-allowed':
     case 'auth/admin-restricted-operation':
     case 'auth/configuration-not-found':
+      if (provider === 'google') {
+        return 'El acceso con Google aún no está activado en Firebase Console. Actívalo en Authentication > Sign-in method > Google.';
+      }
       return 'El acceso con correo electrónico y contraseña aún no está activado en Firebase Console. Actívalo en Authentication > Sign-in method > Correo electrónico/Contraseña.';
     case 'auth/unauthorized-domain':
       return host
@@ -422,7 +438,9 @@ export function mapAuthErrorMessage(err: unknown): string {
     case 'auth/popup-closed-by-user':
       return 'Cerraste la ventana de Google antes de completar el acceso.';
     case 'auth/popup-blocked':
-      return 'Tu navegador bloqueó la ventana emergente de Google. Permite ventanas emergentes e inténtalo de nuevo.';
+      return 'Tu navegador bloqueó la ventana emergente de Google. Abre Viroklipz en una pestaña del navegador o permite ventanas emergentes.';
+    case 'auth/operation-not-supported-in-this-environment':
+      return 'Este visor integrado bloquea la ventana de Google. Abre Viroklipz en tu navegador para iniciar sesión con Google.';
     case 'auth/cancelled-popup-request':
       return 'Se canceló la solicitud anterior de Google. Inténtalo de nuevo.';
     case 'auth/account-exists-with-different-credential':
@@ -492,6 +510,7 @@ function buildFallbackProfile(
     bio: '',
     avatarUrl: sanitizeAvatarUrl(user.photoURL),
     isPublic: true,
+    isAdmin: false,
     followersCount: 0,
     coins: 0,
     freeRoses: 0,
@@ -511,7 +530,11 @@ export async function ensureUserProfile(
   overrides?: EnsureProfileOverrides,
 ): Promise<UserProfile> {
   const emailKey = (overrides?.email || user.email || '').trim().toLowerCase();
-  const mergedOverrides = overrides ?? (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined);
+  const mergedOverrides =
+    overrides ??
+    (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined) ??
+    pendingGoogleSignupOverrides ??
+    undefined;
 
   const existingTask = inFlightProfileEnsures.get(user.uid);
   if (existingTask) {
@@ -527,38 +550,73 @@ export async function ensureUserProfile(
   return task;
 }
 
+async function getDocWithTransientRetry(
+  userRef: ReturnType<typeof doc>,
+): Promise<Awaited<ReturnType<typeof getDoc>> | null> {
+  const delays = [450, 1000];
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      return await getDoc(userRef);
+    } catch (err) {
+      if (!isTransientUnavailableError(err)) {
+        throw err;
+      }
+      if (attempt < delays.length) {
+        await new Promise((r) => window.setTimeout(r, delays[attempt]));
+      }
+    }
+  }
+  return null;
+}
+
+async function setDocWithTransientRetry(
+  userRef: ReturnType<typeof doc>,
+  payload: Record<string, unknown>,
+): Promise<boolean> {
+  const delays = [500, 1100];
+  for (let attempt = 0; attempt <= delays.length; attempt += 1) {
+    try {
+      await setDoc(userRef, payload);
+      return true;
+    } catch (err) {
+      if (!isTransientUnavailableError(err)) {
+        throw err;
+      }
+      if (attempt < delays.length) {
+        await new Promise((r) => window.setTimeout(r, delays[attempt]));
+      }
+    }
+  }
+  return false;
+}
+
 async function ensureUserProfileInternal(
   user: User,
   overrides?: EnsureProfileOverrides,
 ): Promise<UserProfile> {
   const emailKey = (overrides?.email || user.email || '').trim().toLowerCase();
   const effectiveOverrides =
-    overrides ?? (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined);
+    overrides ??
+    (emailKey ? pendingSignupOverridesByEmail.get(emailKey) : undefined) ??
+    pendingGoogleSignupOverrides ??
+    undefined;
 
   const userPath = `users/${user.uid}`;
   const userRef = doc(db, 'users', user.uid);
 
-  let snap;
+  let snap: Awaited<ReturnType<typeof getDoc>> | null = null;
   try {
-    snap = await getDoc(userRef);
+    snap = await getDocWithTransientRetry(userRef);
   } catch (err) {
-    if (isTransientUnavailableError(err)) {
-      await new Promise((r) => window.setTimeout(r, 600));
-      try {
-        snap = await getDoc(userRef);
-      } catch (retryErr) {
-        if (isTransientUnavailableError(retryErr)) {
-          return buildFallbackProfile(user, effectiveOverrides);
-        }
-        handleFirestoreError(retryErr, OperationType.GET, userPath);
-      }
-    } else {
-      handleFirestoreError(err, OperationType.GET, userPath);
-    }
+    handleFirestoreError(err, OperationType.GET, userPath);
+  }
+
+  if (snap === null) {
+    return buildFallbackProfile(user, effectiveOverrides);
   }
 
   if (snap.exists()) {
-    const d = snap.data();
+    const d = snap.data() as Record<string, unknown>;
     const rawPresence = String(d.presenceStatus || 'online');
     const presenceStatus: PresenceStatus =
       rawPresence === 'busy' || rawPresence === 'hidden' ? rawPresence : 'online';
@@ -576,6 +634,7 @@ async function ensureUserProfileInternal(
       pronouns: typeof d.pronouns === 'string' ? d.pronouns : '',
       avatarUrl: String(d.avatarUrl || ''),
       isPublic: Boolean(d.isPublic ?? true),
+      isAdmin: Boolean(d.isAdmin ?? false),
       followersCount: typeof d.followersCount === 'number' ? d.followersCount : 0,
       fcmTokenWeb: typeof d.fcmTokenWeb === 'string' ? d.fcmTokenWeb : undefined,
       presenceStatus,
@@ -621,6 +680,8 @@ async function ensureUserProfileInternal(
     bio: '',
     avatarUrl: fallback.avatarUrl,
     isPublic: true,
+    followersCount: 0,
+    ...(effectiveEmail ? { email: effectiveEmail } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -642,13 +703,15 @@ async function ensureUserProfileInternal(
     };
   }
 
+  let persisted = false;
   try {
-    await setDoc(userRef, userDocPayload);
+    persisted = await setDocWithTransientRetry(userRef, userDocPayload);
   } catch (err) {
-    if (isTransientUnavailableError(err)) {
-      return fallback;
-    }
     handleFirestoreError(err, OperationType.CREATE, userPath);
+  }
+
+  if (!persisted) {
+    return fallback;
   }
 
   try {
@@ -1111,10 +1174,10 @@ export async function publishClip(
   profile: UserProfile,
   input: {
     caption: string;
-    category: ClipCategory;
+    category: string;
     hashtags: string[];
     audioTitle: string;
-    audioPreset: AudioPreset;
+    audioPreset: string;
     visualPreset: string;
     durationSec: number;
     visibility: ClipVisibility;
@@ -1165,9 +1228,9 @@ export async function publishClip(
     }
   }
 
-  const resolvedAudioTitle = (input.audioTitle.trim() || 'Audio original').slice(0, MAX_AUDIO_TITLE_LEN);
-  const resolvedCategory: ClipCategory =
-    input.category && ALLOWED_CATEGORIES.includes(input.category) ? input.category : 'general';
+  const resolvedAudioTitle = input.audioTitle.trim().slice(0, MAX_AUDIO_TITLE_LEN);
+  const resolvedAudioPreset = input.audioPreset.trim().slice(0, MAX_AUDIO_PRESET_LEN);
+  const resolvedCategory = input.category.trim().slice(0, MAX_CATEGORY_LEN);
   const resolvedVisibility: ClipVisibility =
     input.visibility === 'private' ? 'private' : 'public';
   const resolvedCaption = input.caption.trim().slice(0, MAX_CAPTION_LEN);
@@ -1183,7 +1246,7 @@ export async function publishClip(
       category: resolvedCategory,
       hashtags: input.hashtags.slice(0, MAX_HASHTAGS),
       audioTitle: resolvedAudioTitle,
-      audioPreset: input.audioPreset,
+      audioPreset: resolvedAudioPreset,
       visualPreset: input.visualPreset.slice(0, MAX_VISUAL_PRESET_LEN),
       videoUrl,
       durationSec: Math.min(60, Math.max(3, Math.round(input.durationSec))),
@@ -2938,6 +3001,8 @@ export interface WalletSnapshot {
   coins: number;
   freeRoses: number;
   welcomeRechargeClaimed: boolean;
+  followersCount: number;
+  isAdmin: boolean;
 }
 
 export function subscribeUserWallet(
@@ -2960,10 +3025,53 @@ export function subscribeUserWallet(
             ? Math.max(0, Math.floor(d.freeRoses))
             : 0,
         welcomeRechargeClaimed: Boolean(d.welcomeRechargeClaimed ?? false),
+        followersCount:
+          typeof d.followersCount === 'number' && Number.isFinite(d.followersCount)
+            ? Math.max(0, Math.floor(d.followersCount))
+            : 0,
+        isAdmin: Boolean(d.isAdmin ?? false),
       });
     },
     (err) => {
       console.warn('No se pudo suscribir al saldo de monedas:', err);
+    },
+  );
+}
+
+export interface UserLiveAccessSnapshot {
+  followersCount: number;
+  isAdmin: boolean;
+  loaded: boolean;
+}
+
+export function subscribeUserLiveAccess(
+  uid: string,
+  onData: (access: UserLiveAccessSnapshot) => void,
+): Unsubscribe {
+  if (!uid) {
+    onData({ followersCount: 0, isAdmin: false, loaded: true });
+    return () => {};
+  }
+  return onSnapshot(
+    doc(db, 'users', uid),
+    (snap) => {
+      if (!snap.exists()) {
+        onData({ followersCount: 0, isAdmin: false, loaded: true });
+        return;
+      }
+      const d = snap.data();
+      onData({
+        followersCount:
+          typeof d.followersCount === 'number' && Number.isFinite(d.followersCount)
+            ? Math.max(0, Math.floor(d.followersCount))
+            : 0,
+        isAdmin: Boolean(d.isAdmin ?? false),
+        loaded: true,
+      });
+    },
+    (err) => {
+      console.warn('No se pudo verificar permisos de Live desde Firestore:', err);
+      onData({ followersCount: 0, isAdmin: false, loaded: true });
     },
   );
 }

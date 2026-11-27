@@ -280,19 +280,18 @@
         },
         "category": {
           "type": "string",
-          "enum": ["general", "baile", "musica", "cocina", "deportes", "arte", "comedia", "viajes"]
+          "maxLength": 60
         },
         "hashtags": {
           "type": "array"
         },
         "audioTitle": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 80
         },
         "audioPreset": {
           "type": "string",
-          "enum": ["urban_beat", "sunset_house", "lofi_espresso", "alpine_rush", "analog_synth"]
+          "maxLength": 80
         },
         "visualPreset": {
           "type": "string",

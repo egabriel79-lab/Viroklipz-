@@ -58,7 +58,7 @@ class ViroklipzAudioEngine {
   private ctx: AudioContext | null = null;
   private timer: number | null = null;
   private step = 0;
-  private activePreset: AudioPreset | null = null;
+  private activePreset: string | null = null;
 
   private ensureContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -73,7 +73,12 @@ class ViroklipzAudioEngine {
     return this.ctx;
   }
 
-  public start(preset: AudioPreset) {
+  public start(preset: string) {
+    const cfg = PRESETS[preset as AudioPreset];
+    if (!cfg) {
+      this.stop();
+      return;
+    }
     if (this.activePreset === preset && this.timer !== null) return;
     this.stop();
     const ctx = this.ensureContext();
@@ -81,7 +86,6 @@ class ViroklipzAudioEngine {
 
     this.activePreset = preset;
     this.step = 0;
-    const cfg = PRESETS[preset];
     const stepMs = Math.round((60 / cfg.bpm / 2) * 1000);
 
     const tick = () => {

@@ -147,7 +147,7 @@ export function ClipPlayer({
 
   // Sync Web Audio procedural synthesizer when active + playing + no video stream (sound ON by default)
   useEffect(() => {
-    if (isActive && isPlaying && !videoSrc) {
+    if (isActive && isPlaying && !videoSrc && clip.audioPreset) {
       audioEngine.start(clip.audioPreset);
     } else if (isActive) {
       audioEngine.stop();
@@ -434,10 +434,12 @@ export function ClipPlayer({
           </p>
         )}
 
-        <div className="flex items-center gap-1.5 text-[11px] text-zinc-200/90">
-          <Music2 className="w-3 h-3 shrink-0 text-[#00B4D8]" />
-          <span className="truncate">{clip.audioTitle}</span>
-        </div>
+        {(clip.audioTitle || clip.audioPreset) && (
+          <div className="flex items-center gap-1.5 text-[11px] text-zinc-200/90">
+            <Music2 className="w-3 h-3 shrink-0 text-[#00B4D8]" />
+            <span className="truncate">{clip.audioTitle || clip.audioPreset}</span>
+          </div>
+        )}
       </div>
 
     </div>

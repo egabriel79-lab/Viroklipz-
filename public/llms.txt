@@ -1,22 +1,20 @@
 # Viroklipz
 
-> Red social PWA (Aplicación Web Progresiva) ligera de videos cortos verticales 9:16, transmisiones en vivo (LIVE), historias y comunidad en tiempo real sin descargas pesadas.
+> La Red Social de Videos y Lives. Una Aplicación Web Progresiva (PWA) sin descargas para crear videos verticales, transmitir en vivo, ganar monedas con VEX Pay y conectar con creadores.
 
 ## Qué es Viroklipz
-Viroklipz es una plataforma social web progresiva diseñada para creadores de contenido y espectadores que buscan la fluidez de una app nativa directamente desde el navegador, sin ocupar gigabytes de almacenamiento ni consumir datos innecesarios.
+Viroklipz es la red social definitiva de videos cortos verticales y transmisiones en vivo, diseñada para funcionar directo desde el navegador sin obligarte a descargar aplicaciones pesadas de la App Store o Play Store.
 
-## Ventajas principales como PWA
-- **Instalación instantánea sin tiendas**: Se añade a la pantalla de inicio en Android, iOS y escritorio en segundos con actualizaciones automáticas.
-- **Almacenamiento mínimo**: Funciona con una caché ligera frente a aplicaciones nativas tradicionales.
-- **Modo Ahorro de Datos (720 kbps)**: Compresión inteligente al grabar klips (10s, 15s, 30s o 60s) y precarga controlada para redes móviles.
-- **Feed híbrido Para ti y Siguiendo**: Combina klips verticales 9:16 con transmisiones en vivo (LIVE) en tiempo real.
-- **Historias, notas y chat en tiempo real**: Hasta 10 historias por usuario, mensajes directos, sala de la comunidad y sistema de rachas diarias.
-- **Viroklipz Studio y perfil personalizable**: Métricas de visualizaciones, me gusta y guardados, fondo animado y bordes de video adaptables al modo Claro y Oscuro.
+## Todo lo que puedes hacer
+- **Sube y Comparte**: Publica videos verticales 9:16, fotos o textos en segundos.
+- **Transmite en Vivo**: Haz Lives, interactúa con tu audiencia y recibe regalos en tiempo real.
+- **Monetiza tu Talento**: Compra y envía monedas virtuales vía VEX Pay a tus creadores favoritos.
+- **Comunidad Real**: Chatea, sigue a tus amigos y descubre nuevas tendencias.
 
-## Audiencia y casos de uso
-- Creadores de video vertical corto que quieren publicar rápido desde móvil o escritorio.
-- Comunidades en vivo que buscan transmisiones LIVE sin fricción de instalación.
-- Usuarios con espacio limitado o planes de datos móviles reducidos.
+## Ventajas de ser PWA
+- Instalación instantánea en 2 clics desde el navegador.
+- Ahorro real de batería y datos móviles.
+- Funciona de forma fluida en Android, iOS y PC.
 
 ## Enlaces principales
 - Inicio y registro: /

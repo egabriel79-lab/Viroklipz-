@@ -226,10 +226,10 @@ service cloud.firestore {
         && data.authorDisplayName is string && data.authorDisplayName.size() >= 1 && data.authorDisplayName.size() <= 40
         && data.authorAvatarUrl is string && data.authorAvatarUrl.size() <= 300
         && data.caption is string && data.caption.size() <= 1000
-        && data.category in ['general', 'baile', 'musica', 'cocina', 'deportes', 'arte', 'comedia', 'viajes']
+        && data.category is string && data.category.size() <= 60
         && isValidHashtags(data.hashtags)
-        && data.audioTitle is string && data.audioTitle.size() >= 1 && data.audioTitle.size() <= 80
-        && data.audioPreset in ['urban_beat', 'sunset_house', 'lofi_espresso', 'alpine_rush', 'analog_synth']
+        && data.audioTitle is string && data.audioTitle.size() <= 80
+        && data.audioPreset is string && data.audioPreset.size() <= 80
         && data.visualPreset is string && data.visualPreset.size() >= 1 && data.visualPreset.size() <= 120
         && (!('videoUrl' in data) || (data.videoUrl is string && data.videoUrl.size() <= 300 && (data.videoUrl.size() == 0 || data.videoUrl.matches('^https://.*'))))
         && data.durationSec is number && data.durationSec >= 3 && data.durationSec <= 60

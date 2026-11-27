@@ -55,6 +55,7 @@ export interface UserProfile {
   pronouns?: string;
   avatarUrl: string;
   isPublic: boolean;
+  isAdmin?: boolean;
   followersCount?: number;
   fcmTokenWeb?: string;
   presenceStatus?: PresenceStatus;
@@ -93,10 +94,10 @@ export interface ClipItem {
   authorDisplayName: string;
   authorAvatarUrl: string;
   caption: string;
-  category: ClipCategory;
+  category: string;
   hashtags: string[];
   audioTitle: string;
-  audioPreset: AudioPreset;
+  audioPreset: string;
   visualPreset: string;
   videoUrl?: string;
   durationSec: number;

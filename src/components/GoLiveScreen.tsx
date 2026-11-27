@@ -38,6 +38,7 @@ import {
   subscribeLiveJoinRequests,
   subscribeLiveStreamById,
   subscribeLiveStreamMessages,
+  subscribeUserLiveAccess,
   updateFirestoreLiveGuest,
   updateFirestoreLiveHostSettings,
 } from '../lib/viroklipzService';
@@ -172,7 +173,21 @@ function formatLiveDuration(seconds: number): string {
   return `${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }
 
+const MIN_LIVE_FOLLOWERS = 1000;
+
 export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps) {
+  const [liveAccess, setLiveAccess] = useState<{
+    followersCount: number;
+    isAdmin: boolean;
+    loaded: boolean;
+  }>({
+    followersCount: currentUser.followersCount ?? 0,
+    isAdmin: Boolean(currentUser.isAdmin),
+    loaded: false,
+  });
+  const canGoLive =
+    liveAccess.followersCount >= MIN_LIVE_FOLLOWERS || liveAccess.isAdmin === true;
+
   const [title, setTitle] = useState('Bienvenidos a mi Live');
   const [about, setAbout] = useState('');
   const [category, setCategory] = useState<ClipCategory>('general');
@@ -383,12 +398,23 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   );
 
   useEffect(() => {
+    const unsub = subscribeUserLiveAccess(currentUser.uid, (access) => {
+      setLiveAccess(access);
+    });
+    return () => unsub();
+  }, [currentUser.uid]);
+
+  useEffect(() => {
+    if (!canGoLive) {
+      stopMediaStream();
+      return;
+    }
     void startPreview(facingMode, quality);
     return () => {
       void stopBroadcastResources();
       stopMediaStream();
     };
-  }, [facingMode, quality, startPreview, stopBroadcastResources, stopMediaStream]);
+  }, [canGoLive, facingMode, quality, startPreview, stopBroadcastResources, stopMediaStream]);
 
   const triggerPartyJoinToast = useCallback((message: string) => {
     setPartyJoinToast(message);
@@ -846,6 +872,74 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
     BACKGROUND_PRESETS.find((bg) => bg.id === backgroundPreset) || BACKGROUND_PRESETS[0];
   const activeVipStylePreset =
     VIP_ALERT_STYLES.find((s) => s.id === vipAlertStyle) || VIP_ALERT_STYLES[0];
+
+  if (!canGoLive) {
+    const progressPct = Math.min(
+      100,
+      Math.round((liveAccess.followersCount / MIN_LIVE_FOLLOWERS) * 100),
+    );
+    return (
+      <div className="fixed inset-0 z-50 bg-[#090B12] flex flex-col pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-white">
+        <div className="px-4 h-14 flex items-center justify-between border-b border-white/10 bg-[#111524]">
+          <button
+            type="button"
+            onClick={onBack}
+            className="min-h-[40px] px-3 rounded-xl hover:bg-white/5 text-sm font-semibold text-zinc-200 cursor-pointer"
+          >
+            Volver
+          </button>
+          <span className="font-display text-base font-bold text-white">Transmitir en vivo</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar"
+            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-full text-zinc-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+          <div className="max-w-sm w-full bg-[#131726] border border-white/10 rounded-2xl p-6 space-y-5 shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-[#6C5CE7]/15 border border-[#6C5CE7]/35 flex items-center justify-center mx-auto">
+              <Lock className="w-7 h-7 text-[#8B7CF6]" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="font-display text-xl font-bold text-white">
+                Live disponible con 1,000 seguidores
+              </h2>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Necesitas al menos 1,000 seguidores en tu perfil de Viroklipz para desbloquear las transmisiones en vivo.
+              </p>
+            </div>
+
+            <div className="space-y-2 text-left bg-[#090B12] border border-white/10 rounded-xl p-3.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-zinc-400 font-medium">Tu progreso actual</span>
+                <span className="font-mono font-bold text-white tabular-nums">
+                  {liveAccess.followersCount.toLocaleString('es-ES')} / 1,000
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-[#6C5CE7] to-[#00B4D8] transition-all"
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-full min-h-[46px] px-5 rounded-xl bg-gradient-to-r from-[#00B4D8] via-[#6C5CE7] to-[#E84393] text-white text-sm font-semibold transition-all cursor-pointer"
+            >
+              Volver a grabar o subir klip
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-[#090B12] flex flex-col overflow-hidden text-white">

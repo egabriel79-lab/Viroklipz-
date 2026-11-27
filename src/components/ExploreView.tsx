@@ -107,7 +107,7 @@ export function ExploreView({
                       </p>
                       <div className="flex items-center justify-between gap-2 text-[11px] text-zinc-300">
                         <span className="truncate capitalize">
-                          {CATEGORY_TITLES[clip.category]}
+                          {CATEGORY_TITLES[clip.category as ClipCategory] || clip.category}
                         </span>
                         <span className="inline-flex items-center gap-1 font-mono tabular-nums shrink-0">
                           <Heart className="w-3 h-3 text-[#6C5CE7]" />

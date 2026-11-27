@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Eye, EyeOff, ShieldCheck, X } from 'lucide-react';
+import { Check, ExternalLink, Eye, EyeOff, ShieldCheck, X } from 'lucide-react';
+import firebaseConfig from '../../firebase-applet-config.json';
 import {
+  extractAuthErrorCode,
   mapAuthErrorMessage,
+  resetUserPassword,
   signInWithEmail,
   signInWithGoogle,
   signUpWithEmail,
@@ -42,15 +45,28 @@ export function AuthModal({
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [resetSentMessage, setResetSentMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authErrorCode, setAuthErrorCode] = useState<string>('');
   const [localSnackBar, setLocalSnackBar] = useState<string | null>(null);
   const snackTimerRef = useRef<number | null>(null);
+  const errorBannerRef = useRef<HTMLDivElement | null>(null);
 
   const parsedAge =
     ageInput.trim() === '' ? null : Number.parseInt(ageInput.trim(), 10);
   const isValidAgeNumber =
     parsedAge !== null && Number.isFinite(parsedAge) && parsedAge >= 1 && parsedAge <= 120;
   const isMinor = mode === 'signup' && isValidAgeNumber && parsedAge < 18;
+
+  const showFormError = (message: string, code = '') => {
+    setAuthError(message);
+    setAuthErrorCode(code);
+    setResetSentMessage(null);
+    window.requestAnimationFrame(() => {
+      errorBannerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+  };
 
   const triggerSnackBar = (message: string) => {
     if (onNotify) {
@@ -78,9 +94,14 @@ export function AuthModal({
     if (isOpen) {
       setMode(initialMode);
       setAuthError(null);
+      setAuthErrorCode('');
+      setResetSentMessage(null);
       setLocalSnackBar(null);
       setPassword('');
       setShowPassword(false);
+      setSubmitting(false);
+      setGoogleSubmitting(false);
+      setResettingPassword(false);
     }
   }, [isOpen, initialMode]);
 
@@ -88,6 +109,8 @@ export function AuthModal({
 
   const switchMode = (nextMode: AuthModalMode) => {
     setAuthError(null);
+    setAuthErrorCode('');
+    setResetSentMessage(null);
     setLocalSnackBar(null);
     setMode(nextMode);
   };
@@ -95,24 +118,26 @@ export function AuthModal({
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    setAuthErrorCode('');
+    setResetSentMessage(null);
 
     const trimmedEmail = email.trim().toLowerCase();
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-      setAuthError('Introduce un correo electrónico válido.');
+      showFormError('Introduce un correo electrónico válido.');
       return;
     }
     if (password.length < 6) {
-      setAuthError('La contraseña debe tener al menos 6 caracteres.');
+      showFormError('La contraseña debe tener al menos 6 caracteres.');
       return;
     }
 
     if (mode === 'signup') {
       if (displayName.trim().length < 2) {
-        setAuthError('Escribe tu nombre para crear tu perfil en Viroklipz.');
+        showFormError('Escribe tu nombre completo para crear tu perfil en Viroklipz.');
         return;
       }
       if (!isValidAgeNumber || parsedAge === null) {
-        setAuthError('Ingresa tu edad en años (entre 1 y 120).');
+        showFormError('Ingresa tu edad en años (entre 1 y 120) para continuar.');
         return;
       }
 
@@ -127,7 +152,7 @@ export function AuthModal({
           !guardianAuthorized
         ) {
           const msg = 'Debes contar con la autorización de un tutor legal';
-          setAuthError(msg);
+          showFormError(msg);
           triggerSnackBar(msg);
           return;
         }
@@ -159,27 +184,53 @@ export function AuthModal({
             });
       onSuccess(profile);
     } catch (err) {
+      const code = extractAuthErrorCode(err);
       if (
         err instanceof Error &&
         err.message === 'Debes contar con la autorización de un tutor legal'
       ) {
-        setAuthError(err.message);
+        showFormError(err.message);
         triggerSnackBar(err.message);
       } else {
-        setAuthError(mapAuthErrorMessage(err));
+        showFormError(mapAuthErrorMessage(err, 'email'), code);
       }
     } finally {
       setSubmitting(false);
     }
   };
 
+  const handlePasswordReset = async () => {
+    setAuthError(null);
+    setAuthErrorCode('');
+    setResetSentMessage(null);
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      showFormError('Escribe tu correo electrónico arriba y luego toca "¿Olvidaste tu contraseña?".');
+      return;
+    }
+    setResettingPassword(true);
+    try {
+      await resetUserPassword(trimmedEmail);
+      const okMsg = `Te enviamos un correo a ${trimmedEmail} para restablecer tu contraseña. Revisa tu bandeja de entrada o spam.`;
+      setResetSentMessage(okMsg);
+      triggerSnackBar('Enlace de recuperación enviado');
+    } catch (err) {
+      const code = extractAuthErrorCode(err);
+      showFormError(mapAuthErrorMessage(err, 'email'), code);
+    } finally {
+      setResettingPassword(false);
+    }
+  };
+
   const handleGoogleAuth = async () => {
     setAuthError(null);
+    setAuthErrorCode('');
+    setResetSentMessage(null);
     let overrides: Parameters<typeof signInWithGoogle>[0] | undefined;
 
     if (mode === 'signup' && ageInput.trim() !== '') {
       if (!isValidAgeNumber || parsedAge === null) {
-        setAuthError('Ingresa una edad válida (entre 1 y 120) o déjala vacía para continuar.');
+        showFormError('Ingresa una edad válida (entre 1 y 120) o déjala vacía para continuar.');
         return;
       }
       if (parsedAge < 18) {
@@ -193,7 +244,7 @@ export function AuthModal({
           !guardianAuthorized
         ) {
           const msg = 'Debes contar con la autorización de un tutor legal';
-          setAuthError(msg);
+          showFormError(msg);
           triggerSnackBar(msg);
           return;
         }
@@ -224,7 +275,7 @@ export function AuthModal({
         onSuccess(profile);
       }
     } catch (err) {
-      setAuthError(mapAuthErrorMessage(err));
+      showFormError(mapAuthErrorMessage(err, 'google'), extractAuthErrorCode(err));
     } finally {
       setGoogleSubmitting(false);
     }
@@ -285,14 +336,92 @@ export function AuthModal({
         </div>
 
         {authError && (
-          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/40 text-xs text-rose-600 dark:text-rose-300 leading-relaxed">
-            {authError}
+          <div
+            ref={errorBannerRef}
+            role="alert"
+            className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/40 text-xs text-rose-600 dark:text-rose-300 leading-relaxed space-y-2"
+          >
+            <p>{authError}</p>
+            {(authErrorCode === 'auth/operation-not-allowed' ||
+              authErrorCode === 'auth/admin-restricted-operation' ||
+              authErrorCode === 'auth/configuration-not-found') && (
+              <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                <a
+                  href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 font-semibold text-[#00B4D8] hover:underline underline-offset-2"
+                >
+                  Activar proveedor en Firebase Console
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
+            {authErrorCode === 'auth/unauthorized-domain' && (
+              <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                <a
+                  href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 font-semibold text-[#00B4D8] hover:underline underline-offset-2"
+                >
+                  Autorizar dominio en Firebase Console
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
+            {(authErrorCode === 'auth/popup-blocked' ||
+              authErrorCode === 'auth/operation-not-supported-in-this-environment') &&
+              typeof window !== 'undefined' && (
+                <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                  <a
+                    href={window.location.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 font-semibold text-[#00B4D8] hover:underline underline-offset-2"
+                  >
+                    Abrir en navegador completo
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
+            {mode === 'signup' && authErrorCode === 'auth/email-already-in-use' && (
+              <button
+                type="button"
+                onClick={() => switchMode('login')}
+                className="font-semibold text-[#00B4D8] hover:underline underline-offset-2 cursor-pointer"
+              >
+                Ir a Iniciar sesión con este correo →
+              </button>
+            )}
+            {mode === 'login' &&
+              (authErrorCode === 'auth/invalid-credential' ||
+                authErrorCode === 'auth/user-not-found' ||
+                authErrorCode === 'auth/wrong-password' ||
+                authErrorCode === 'auth/invalid-login-credentials') && (
+                <button
+                  type="button"
+                  onClick={() => switchMode('signup')}
+                  className="font-semibold text-[#00B4D8] hover:underline underline-offset-2 cursor-pointer"
+                >
+                  ¿Eres nuevo? Crear cuenta con este correo →
+                </button>
+              )}
+          </div>
+        )}
+
+        {resetSentMessage && (
+          <div
+            role="status"
+            className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/40 text-xs text-emerald-700 dark:text-emerald-300 leading-relaxed"
+          >
+            {resetSentMessage}
           </div>
         )}
 
         <button
           type="button"
-          disabled={submitting || googleSubmitting}
+          disabled={submitting || googleSubmitting || resettingPassword}
           onClick={() => void handleGoogleAuth()}
           className="w-full min-h-[46px] px-4 rounded-xl bg-zinc-100 dark:bg-white text-zinc-950 hover:bg-zinc-200 dark:hover:bg-zinc-100 disabled:opacity-50 border border-zinc-300 dark:border-white/20 text-sm font-semibold flex items-center justify-center gap-2.5 shadow-sm transition-colors cursor-pointer"
         >
@@ -410,12 +539,24 @@ export function AuthModal({
           </div>
 
           <div>
-            <label
-              htmlFor="auth-password"
-              className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5"
-            >
-              Contraseña
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label
+                htmlFor="auth-password"
+                className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300"
+              >
+                Contraseña
+              </label>
+              {mode === 'login' && (
+                <button
+                  type="button"
+                  disabled={submitting || googleSubmitting || resettingPassword}
+                  onClick={() => void handlePasswordReset()}
+                  className="text-[11px] font-semibold text-[#6C5CE7] dark:text-[#00B4D8] hover:underline underline-offset-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {resettingPassword ? 'Enviando...' : '¿Olvidaste tu contraseña?'}
+                </button>
+              )}
+            </div>
             <div className="relative">
               <input
                 id="auth-password"
@@ -549,7 +690,7 @@ export function AuthModal({
 
           <button
             type="submit"
-            disabled={submitting || googleSubmitting}
+            disabled={submitting || googleSubmitting || resettingPassword}
             className="w-full min-h-[46px] rounded-xl bg-neon-cta disabled:opacity-50 text-white text-sm font-semibold transition-all cursor-pointer"
           >
             {submitting

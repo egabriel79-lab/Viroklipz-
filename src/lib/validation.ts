@@ -22,6 +22,8 @@ export const MAX_NOTE_LEN = 60;
 export const MAX_REPORT_DETAILS_LEN = 240;
 export const MAX_HASHTAGS = 8;
 export const MAX_HASHTAG_LEN = 32;
+export const MAX_CATEGORY_LEN = 60;
+export const MAX_AUDIO_PRESET_LEN = 80;
 export const MAX_AUDIO_TITLE_LEN = 80;
 export const MAX_VISUAL_PRESET_LEN = 120;
 export const MAX_FCM_TOKEN_LEN = 512;
@@ -215,8 +217,8 @@ export function parseHashtags(raw: string): string[] {
 export function validateClipPayload(input: {
   caption: string;
   audioTitle: string;
-  category?: ClipCategory | '';
-  audioPreset: AudioPreset;
+  category?: string;
+  audioPreset: string;
   durationSec: number;
 }): { ok: true } | { ok: false; message: string } {
   const caption = input.caption.trim();
@@ -226,6 +228,32 @@ export function validateClipPayload(input: {
       message: 'La descripción contiene términos no permitidos por las normas de Viroklipz.',
     };
   }
+  const category = (input.category || '').trim();
+  if (category.length > MAX_CATEGORY_LEN) {
+    return {
+      ok: false,
+      message: `La categoría no puede superar ${MAX_CATEGORY_LEN} caracteres.`,
+    };
+  }
+  if (category.length > 0 && containsProhibitedContent(category)) {
+    return {
+      ok: false,
+      message: 'La categoría contiene términos no permitidos por las normas de Viroklipz.',
+    };
+  }
+  const audioPreset = (input.audioPreset || '').trim();
+  if (audioPreset.length > MAX_AUDIO_PRESET_LEN) {
+    return {
+      ok: false,
+      message: `El ritmo o beat no puede superar ${MAX_AUDIO_PRESET_LEN} caracteres.`,
+    };
+  }
+  if (audioPreset.length > 0 && containsProhibitedContent(audioPreset)) {
+    return {
+      ok: false,
+      message: 'El ritmo o beat contiene términos no permitidos por las normas de Viroklipz.',
+    };
+  }
   const audioTitle = input.audioTitle.trim();
   if (audioTitle.length > MAX_AUDIO_TITLE_LEN) {
     return {
@@ -233,8 +261,11 @@ export function validateClipPayload(input: {
       message: `El título de audio no puede superar ${MAX_AUDIO_TITLE_LEN} caracteres.`,
     };
   }
-  if (!ALLOWED_AUDIO_PRESETS.includes(input.audioPreset)) {
-    return { ok: false, message: 'Pista de audio no válida.' };
+  if (audioTitle.length > 0 && containsProhibitedContent(audioTitle)) {
+    return {
+      ok: false,
+      message: 'El nombre del audio contiene términos no permitidos por las normas de Viroklipz.',
+    };
   }
   if (input.durationSec < 3 || input.durationSec > 60) {
     return { ok: false, message: 'La duración debe estar entre 3 y 60 segundos.' };

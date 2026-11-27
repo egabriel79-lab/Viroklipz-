@@ -10,14 +10,12 @@ import QRCode from 'qrcode';
 import {
   ArrowLeft,
   Ban,
-  BellRing,
   Bookmark,
   Camera,
   Check,
   ChevronRight,
   Clock,
   Copy,
-  Crown,
   Eye,
   FileText,
   Flag,
@@ -75,10 +73,6 @@ import { resolveFanLevel } from '../lib/liveGifts';
 import { AvatarImg } from './AvatarImg';
 import { FanLevelBadge } from './FanLevelBadge';
 import { LegalModal } from './LegalModal';
-import {
-  LiveClubConfiguratorModal,
-  type LiveClubConfigTab,
-} from './LiveClubConfiguratorModal';
 
 interface ProfileViewProps {
   currentUser: UserProfile | null;
@@ -745,7 +739,6 @@ export function ProfileView({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerSection, setDrawerSection] = useState<DrawerSection>('menu');
   const [legalOpen, setLegalOpen] = useState(false);
-  const [clubConfigTab, setClubConfigTab] = useState<LiveClubConfigTab | null>(null);
 
   // Offline clips, QR & Delete account state
   const [offlineIds, setOfflineIds] = useState<string[]>([]);
@@ -1433,7 +1426,7 @@ export function ProfileView({
       <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-3 sm:py-6 pb-24 lg:pb-10 space-y-5">
         {/* 1. Barra superior: @usuario a la izquierda (o botón volver) | QR, Añadir amigo, Menú a la derecha */}
         <div className="flex items-center justify-between gap-3">
-          {isViewingExternalCreator && currentUser ? (
+          {isViewingExternalCreator ? (
             <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
@@ -1586,21 +1579,7 @@ export function ProfileView({
               <h1 className="font-display text-xl sm:text-2xl font-extrabold tracking-tight text-zinc-950 dark:text-white truncate">
                 {profileData.displayName}
               </h1>
-              {!isViewingExternalCreator && currentUser ? (
-                <button
-                  type="button"
-                  onClick={() => setClubConfigTab('fan_level')}
-                  title="Configurar Nivel de Fan y Club de Fans"
-                  className="inline-flex items-center gap-1.5 rounded-xl hover:opacity-90 transition-opacity cursor-pointer"
-                >
-                  <FanLevelBadge level={profileFanLevel} />
-                  <span className="text-[11px] font-semibold text-cyan-700 dark:text-[#00B4D8] px-1.5 py-0.5 rounded-lg bg-[#00B4D8]/10 border border-[#00B4D8]/35">
-                    Configurar
-                  </span>
-                </button>
-              ) : (
-                <FanLevelBadge level={profileFanLevel} />
-              )}
+              <FanLevelBadge level={profileFanLevel} />
               {profileData.pronouns && (
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">
                   · {profileData.pronouns}
@@ -1612,7 +1591,7 @@ export function ProfileView({
             </p>
           </div>
 
-          {/* 4. Biografía con color completo o por partes + Botón "+ Agregar enlace personal" */}
+          {/* 4. Biografía con color completo o por partes + Enlace personal */}
           <div className="space-y-2 px-1">
             <p className="text-sm max-w-xl leading-relaxed whitespace-pre-line">
               {renderStyledBio(
@@ -1623,7 +1602,7 @@ export function ProfileView({
               )}
             </p>
 
-            {!isViewingExternalCreator && (
+            {(profileData.personalLink || !isViewingExternalCreator) && (
               <div className="flex flex-wrap items-center gap-3">
                 {profileData.personalLink ? (
                   <a
@@ -1649,7 +1628,7 @@ export function ProfileView({
             )}
           </div>
 
-          {/* 5. Dos botones: "Viroklipz Studio" y "Editar descripción" */}
+          {/* 5. Acciones de perfil: solo el dueño ve "Viroklipz Studio" y "Editar descripción" */}
           {isViewingExternalCreator ? (
             <div className="flex flex-wrap items-center gap-2.5">
               <button
@@ -1684,7 +1663,7 @@ export function ProfileView({
                 </button>
               )}
             </div>
-          ) : (
+          ) : currentUser ? (
             <div className="grid grid-cols-2 gap-2.5 max-w-md">
               <button
                 type="button"
@@ -1703,51 +1682,7 @@ export function ProfileView({
                 <span>Editar descripción</span>
               </button>
             </div>
-          )}
-
-          {!isViewingExternalCreator && currentUser && (
-            <div className="max-w-md rounded-2xl bg-[#0B0E1B]/95 backdrop-blur-xl border border-[#00B4D8]/35 shadow-[0_0_24px_rgba(232,67,147,0.16)] p-2.5 space-y-2">
-              <div className="flex items-center justify-between gap-2 px-1">
-                <span className="text-[11px] font-bold text-white inline-flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-[#E84393]" />
-                  Club VIP y Alertas en Vivo
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setClubConfigTab('fan_level')}
-                  className="text-[11px] font-semibold text-[#00B4D8] hover:text-[#E84393] cursor-pointer"
-                >
-                  Configurar todo
-                </button>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setClubConfigTab('fan_level')}
-                  className="min-h-[38px] px-2 rounded-xl bg-[#12162A] hover:bg-[#191F3B] border border-[#00B4D8]/35 text-[11px] font-bold text-white inline-flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                >
-                  <Star className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
-                  <span className="truncate">Nivel Fan</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setClubConfigTab('favorites')}
-                  className="min-h-[38px] px-2 rounded-xl bg-[#12162A] hover:bg-[#191F3B] border border-[#E84393]/35 text-[11px] font-bold text-white inline-flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                >
-                  <Crown className="w-3.5 h-3.5 text-[#E84393] shrink-0" />
-                  <span className="truncate">Favoritos</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setClubConfigTab('vip_alert')}
-                  className="min-h-[38px] px-2 rounded-xl bg-[#12162A] hover:bg-[#191F3B] border border-[#6C5CE7]/45 text-[11px] font-bold text-white inline-flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                >
-                  <BellRing className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
-                  <span className="truncate">Alerta VIP</span>
-                </button>
-              </div>
-            </div>
-          )}
+          ) : null}
         </section>
 
         {/* 6. Fila de historias: "+ Nuevo" (borde punteado) y "Moment..." (círculo con imagen) */}
@@ -1818,7 +1753,9 @@ export function ProfileView({
           {createdClips.length === 0 ? (
             <div className="py-12 text-center bg-white dark:bg-[#161926] border border-zinc-200 dark:border-white/10 rounded-2xl space-y-3">
               <p className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
-                Todavía no has publicado videos
+                {isViewingExternalCreator
+                  ? 'Este creador todavía no ha publicado videos'
+                  : 'Todavía no has publicado videos'}
               </p>
               {!isViewingExternalCreator && (
                 <button
@@ -3479,15 +3416,6 @@ export function ProfileView({
         isOpen={legalOpen}
         onClose={() => setLegalOpen(false)}
       />
-
-      {currentUser && !isViewingExternalCreator && (
-        <LiveClubConfiguratorModal
-          isOpen={clubConfigTab !== null}
-          initialTab={clubConfigTab || 'fan_level'}
-          currentUser={currentUser}
-          onClose={() => setClubConfigTab(null)}
-        />
-      )}
     </div>
   );
 }

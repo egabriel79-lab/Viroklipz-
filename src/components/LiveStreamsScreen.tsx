@@ -162,12 +162,25 @@ export function buildLiveStreamsFromCreators(
 
     const creatorClips = clips.filter((c) => c.authorId === creator.uid);
     const leadClip = creatorClips[0];
-    const category: ClipCategory = leadClip?.category || 'general';
+    const rawCat = leadClip?.category as ClipCategory | undefined;
+    const category: ClipCategory =
+      rawCat && rawCat in STREAM_TITLES_BY_CATEGORY ? rawCat : 'general';
     const titleOptions = STREAM_TITLES_BY_CATEGORY[category] || STREAM_TITLES_BY_CATEGORY.general;
     const presetFallback = VISUAL_PRESETS[idx % VISUAL_PRESETS.length];
 
     const baseViewers = [184, 312, 96, 64, 148, 225];
     const viewerCount = baseViewers[idx % baseViewers.length] + ((idx * 17) % 43);
+
+    const validPresets: readonly AudioPreset[] = [
+      'urban_beat',
+      'sunset_house',
+      'lofi_espresso',
+      'alpine_rush',
+      'analog_synth',
+    ];
+    const rawPreset = leadClip?.audioPreset as AudioPreset | undefined;
+    const audioPreset: AudioPreset =
+      rawPreset && validPresets.includes(rawPreset) ? rawPreset : 'urban_beat';
 
     streams.push({
       isFirestoreLive: false,
@@ -188,7 +201,7 @@ export function buildLiveStreamsFromCreators(
       videoUrl: leadClip?.videoUrl,
       fanPerks: DEFAULT_FAN_PERKS,
       audienceFavorites: DEFAULT_AUDIENCE_FAVORITES,
-      audioPreset: leadClip?.audioPreset || 'urban_beat',
+      audioPreset,
     });
   });
 

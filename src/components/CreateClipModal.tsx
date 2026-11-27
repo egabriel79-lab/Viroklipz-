@@ -14,17 +14,16 @@ import {
   X,
 } from 'lucide-react';
 import { VISUAL_PRESETS } from '../data/starterClips';
-import { AUDIO_PRESET_OPTIONS } from '../lib/audioEngine';
+import { subscribeUserLiveAccess } from '../lib/viroklipzService';
 import {
-  ALLOWED_CATEGORIES,
+  MAX_AUDIO_PRESET_LEN,
   MAX_AUDIO_TITLE_LEN,
+  MAX_CATEGORY_LEN,
   parseHashtags,
   validateClipMediaFile,
   validateClipPayload,
 } from '../lib/validation';
 import type {
-  AudioPreset,
-  ClipCategory,
   ClipVisibility,
   UserProfile,
 } from '../types/viroklipz';
@@ -39,10 +38,10 @@ interface CreateClipModalProps {
   onRequestSignIn: () => void;
   onPublish: (input: {
     caption: string;
-    category: ClipCategory;
+    category: string;
     hashtags: string[];
     audioTitle: string;
-    audioPreset: AudioPreset;
+    audioPreset: string;
     visualPreset: string;
     durationSec: number;
     visibility: ClipVisibility;
@@ -56,17 +55,6 @@ const RECORD_DURATION_OPTIONS = [10, 15, 30, 60] as const;
 type RecordDurationOption = (typeof RECORD_DURATION_OPTIONS)[number];
 
 const MIN_LIVE_FOLLOWERS = 1000;
-
-const CATEGORY_LABELS: Record<ClipCategory, string> = {
-  general: 'General',
-  baile: 'Baile',
-  musica: 'Música',
-  cocina: 'Cocina',
-  deportes: 'Deportes',
-  arte: 'Arte',
-  comedia: 'Comedia',
-  viajes: 'Viajes',
-};
 
 function formatTimerClock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -89,9 +77,9 @@ export function CreateClipModal({
   const [lowBitrateCapture, setLowBitrateCapture] = useState(defaultDataSaver);
   const [selectedMaxDuration, setSelectedMaxDuration] = useState<RecordDurationOption>(15);
   const [caption, setCaption] = useState('');
-  const [category, setCategory] = useState<ClipCategory | ''>('');
+  const [category, setCategory] = useState('');
   const [hashtagsRaw, setHashtagsRaw] = useState('');
-  const [audioPreset, setAudioPreset] = useState<AudioPreset>('urban_beat');
+  const [audioPreset, setAudioPreset] = useState('');
   const [audioTitle, setAudioTitle] = useState('');
   const [visualPreset, setVisualPreset] = useState(VISUAL_PRESETS[0].imageUrl);
   const [durationSec, setDurationSec] = useState(15);
@@ -107,6 +95,13 @@ export function CreateClipModal({
   const [cameraActive, setCameraActive] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [liveAccess, setLiveAccess] = useState<{
+    followersCount: number;
+    isAdmin: boolean;
+  }>({
+    followersCount: currentUser?.followersCount ?? 0,
+    isAdmin: Boolean(currentUser?.isAdmin),
+  });
 
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -173,6 +168,22 @@ export function CreateClipModal({
   );
 
   useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!isOpen || !uid) return;
+    setLiveAccess({
+      followersCount: currentUser?.followersCount ?? 0,
+      isAdmin: Boolean(currentUser?.isAdmin),
+    });
+    const unsub = subscribeUserLiveAccess(uid, (access) => {
+      setLiveAccess({
+        followersCount: access.followersCount,
+        isAdmin: access.isAdmin,
+      });
+    });
+    return () => unsub();
+  }, [isOpen, currentUser?.uid, currentUser?.followersCount, currentUser?.isAdmin]);
+
+  useEffect(() => {
     if (!isOpen) {
       stopCamera();
       setStep('capture');
@@ -182,13 +193,13 @@ export function CreateClipModal({
     }
     setMode(initialMode);
     setLowBitrateCapture(defaultDataSaver);
-    if (currentUser && initialMode === 'video' && step === 'capture' && !previewUrl) {
+    if (currentUser?.uid && initialMode === 'video' && step === 'capture' && !previewUrl) {
       void startCamera(true);
     }
     return () => {
       stopCamera();
     };
-  }, [isOpen, initialMode, currentUser, defaultDataSaver, stopCamera]);
+  }, [isOpen, initialMode, currentUser?.uid, defaultDataSaver, stopCamera]);
 
   useEffect(() => {
     return () => {
@@ -345,14 +356,15 @@ export function CreateClipModal({
       return;
     }
 
-    const resolvedCategory: ClipCategory = category || 'general';
+    const resolvedCategory = category.trim();
     const resolvedVisibility: ClipVisibility = visibility || 'public';
-    const resolvedAudioTitle = audioTitle.trim() || 'Audio original';
+    const resolvedAudioPreset = audioPreset.trim();
+    const resolvedAudioTitle = audioTitle.trim();
     const check = validateClipPayload({
       caption,
       audioTitle: resolvedAudioTitle,
       category: resolvedCategory,
-      audioPreset,
+      audioPreset: resolvedAudioPreset,
       durationSec,
     });
     if (!check.ok) {
@@ -368,7 +380,7 @@ export function CreateClipModal({
         category: resolvedCategory,
         hashtags: parseHashtags(hashtagsRaw),
         audioTitle: resolvedAudioTitle,
-        audioPreset,
+        audioPreset: resolvedAudioPreset,
         visualPreset,
         durationSec,
         visibility: resolvedVisibility,
@@ -379,6 +391,7 @@ export function CreateClipModal({
       setCaption('');
       setCategory('');
       setHashtagsRaw('');
+      setAudioPreset('');
       setAudioTitle('');
       setVisibility('public');
       setMediaBlob(null);
@@ -435,8 +448,9 @@ export function CreateClipModal({
     );
   }
 
-  const followersCount = currentUser.followersCount ?? 0;
-  const canGoLive = followersCount >= MIN_LIVE_FOLLOWERS;
+  const followersCount = liveAccess.followersCount;
+  const isAdmin = liveAccess.isAdmin;
+  const canGoLive = followersCount >= MIN_LIVE_FOLLOWERS || isAdmin === true;
 
   if (mode === 'live') {
     if (!canGoLive) {
@@ -947,19 +961,15 @@ export function CreateClipModal({
                 <label htmlFor="klip-category" className="block text-xs font-semibold text-zinc-300 mb-1.5">
                   Categoría
                 </label>
-                <select
+                <input
                   id="klip-category"
+                  type="text"
+                  maxLength={MAX_CATEGORY_LEN}
                   value={category}
-                  onChange={(e) => setCategory(e.target.value as ClipCategory | '')}
-                  className="w-full min-h-[44px] bg-[#161926] border border-white/10 focus:border-[#00B4D8] rounded-xl px-3 text-sm text-white focus:outline-none"
-                >
-                  <option value="">General (por defecto)</option>
-                  {ALLOWED_CATEGORIES.filter((cat) => cat !== 'general').map((cat) => (
-                    <option key={cat} value={cat}>
-                      {CATEGORY_LABELS[cat]}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="Escribe una categoría (ej. Baile, Comedia, Música)"
+                  className="w-full min-h-[44px] bg-[#161926] border border-white/10 focus:border-[#00B4D8] rounded-xl px-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none"
+                />
               </div>
 
               <div>
@@ -999,18 +1009,15 @@ export function CreateClipModal({
                 </label>
                 <div className="relative">
                   <Music2 className="w-4 h-4 text-[#00B4D8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <select
+                  <input
                     id="klip-audio-preset"
+                    type="text"
+                    maxLength={MAX_AUDIO_PRESET_LEN}
                     value={audioPreset}
-                    onChange={(e) => setAudioPreset(e.target.value as AudioPreset)}
-                    className="w-full min-h-[44px] bg-[#161926] border border-white/10 focus:border-[#00B4D8] rounded-xl pl-9 pr-3 text-sm text-white focus:outline-none"
-                  >
-                    {AUDIO_PRESET_OPTIONS.map((opt) => (
-                      <option key={opt.id} value={opt.id}>
-                        {opt.title}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(e) => setAudioPreset(e.target.value)}
+                    placeholder="Escribe el nombre del ritmo o beat (Opcional)"
+                    className="w-full min-h-[44px] bg-[#161926] border border-white/10 focus:border-[#00B4D8] rounded-xl pl-9 pr-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none"
+                  />
                 </div>
               </div>
 
@@ -1024,7 +1031,7 @@ export function CreateClipModal({
                   maxLength={MAX_AUDIO_TITLE_LEN}
                   value={audioTitle}
                   onChange={(e) => setAudioTitle(e.target.value)}
-                  placeholder="Opcional: nombre del audio"
+                  placeholder="Escribe el nombre del audio (Opcional)"
                   className="w-full min-h-[44px] bg-[#161926] border border-white/10 focus:border-[#00B4D8] rounded-xl px-3 text-sm text-white placeholder:text-zinc-500 focus:outline-none"
                 />
               </div>
