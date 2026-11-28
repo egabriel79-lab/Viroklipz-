@@ -50,6 +50,7 @@ import {
 } from './firebase';
 import { deleteClipMediaBlob, saveClipMediaBlob } from './mediaStorage';
 import {
+  ALLOWED_AUDIO_PRESETS,
   ALLOWED_CATEGORIES,
   createSafeId,
   MAX_AUDIO_PRESET_LEN,
@@ -128,6 +129,18 @@ import {
   resolveFanLevel,
   WELCOME_BONUS_ROSES,
 } from './liveGifts';
+
+function sanitizeProfileUsername(
+  profile: { uid: string; username?: string | null; email?: string | null } | null | undefined,
+  fallbackUid = '',
+): string {
+  const uid = profile?.uid || fallbackUid;
+  const resolvedEmail =
+    profile?.email || (auth.currentUser?.uid === uid ? auth.currentUser?.email : '') || '';
+  return sanitizeUsername(profile?.username || uid || 'creador', uid, {
+    allowReservedOfficial: isOfficialViroklipzEmail(resolvedEmail),
+  });
+}
 
 const actionTimestamps = new Map<string, number>();
 
@@ -1421,10 +1434,18 @@ export async function toggleFollowCreator(
         return;
       }
 
+      const targetData = targetSnap.exists()
+        ? (targetSnap.data() as Record<string, unknown>)
+        : null;
+      const targetEmail = typeof targetData?.email === 'string' ? targetData.email : '';
       tx.set(followRef, {
         followerId: uid,
         targetId,
-        targetUsername: sanitizeUsername(targetUsername, targetId),
+        targetUsername: sanitizeUsername(targetUsername, targetId, {
+          allowReservedOfficial:
+            isOfficialViroklipzEmail(targetEmail) ||
+            (!targetEmail && targetUsername.trim().toLowerCase() === OFFICIAL_VIROKLIPZ_USERNAME),
+        }),
         createdAt: serverTimestamp(),
       });
 
@@ -1525,7 +1546,7 @@ export async function addClipComment(
     id: commentId,
     clipId: clip.id,
     authorId: profile.uid,
-    authorUsername: sanitizeUsername(profile.username, profile.uid),
+    authorUsername: sanitizeProfileUsername(profile),
     authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
     text: text.trim().slice(0, MAX_COMMENT_LEN),
     createdAt: serverTimestamp(),
@@ -1646,7 +1667,7 @@ export async function publishClip(
     await setDoc(doc(db, 'clips', clipId), {
       id: clipId,
       authorId: profile.uid,
-      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorUsername: sanitizeProfileUsername(profile),
       authorDisplayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
       authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       caption: resolvedCaption,
@@ -1853,7 +1874,7 @@ export async function sendChatMessage(
       id: messageId,
       roomId,
       authorId: profile.uid,
-      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorUsername: sanitizeProfileUsername(profile),
       authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       text: text.trim().slice(0, MAX_COMMENT_LEN),
       createdAt: serverTimestamp(),
@@ -1917,7 +1938,7 @@ export async function sendCommunityChatMessage(
       id: messageId,
       roomId: 'community',
       authorId: profile.uid,
-      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorUsername: sanitizeProfileUsername(profile),
       authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       text: text.trim().slice(0, MAX_COMMENT_LEN),
       createdAt: serverTimestamp(),
@@ -2000,7 +2021,10 @@ export async function blockUser(
     await setDoc(doc(db, 'users', uid, 'blocked', targetId), {
       blockerId: uid,
       targetId,
-      targetUsername: sanitizeUsername(targetUsername, targetId),
+      targetUsername: sanitizeUsername(targetUsername, targetId, {
+        allowReservedOfficial:
+          targetUsername.trim().toLowerCase() === OFFICIAL_VIROKLIPZ_USERNAME,
+      }),
       createdAt: serverTimestamp(),
     });
   } catch (err) {
@@ -2236,7 +2260,7 @@ export async function saveStatusNote(
   try {
     await setDoc(doc(db, 'statusNotes', profile.uid), {
       uid: profile.uid,
-      username: sanitizeUsername(profile.username, profile.uid),
+      username: sanitizeProfileUsername(profile),
       displayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
       avatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       note: note.trim().slice(0, MAX_NOTE_LEN),
@@ -2432,7 +2456,7 @@ export async function sendDirectMessage(
       id: messageId,
       threadId,
       authorId: profile.uid,
-      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorUsername: sanitizeProfileUsername(profile),
       authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       text: cleanText,
       createdAt: serverTimestamp(),
@@ -2851,19 +2875,44 @@ export async function startFirestoreLiveStream(
     audioPreset?: AudioPreset;
   },
 ): Promise<string> {
+  const activeAuthUid = auth.currentUser?.uid;
+  if (!activeAuthUid) {
+    throw new Error('Inicia sesión para transmitir en vivo en Viroklipz.');
+  }
+  const hostUid = activeAuthUid;
   const streamId = createSafeId('live');
   const cleanTitle = input.title.trim().slice(0, 80) || 'En vivo en Viroklipz';
   const cleanAbout = (input.about || '').trim().slice(0, 240);
   const cleanAudience: LiveAudience = input.audience === 'friends' ? 'friends' : 'public';
   const cleanQuality: LiveQuality = input.quality === '1080p' ? '1080p' : '720p';
-  const cleanEffect: LiveVisualEffect = input.visualEffect || 'none';
-  const cleanBackgroundPreset: LiveBackgroundPreset = input.backgroundPreset || 'camera';
-  const cleanCommentPermission: LiveCommentPermission = input.commentPermission || 'all';
+  const cleanEffect: LiveVisualEffect = (
+    ['none', 'neon_purple', 'electric_blue', 'magenta_glow', 'noir'].includes(
+      String(input.visualEffect || ''),
+    )
+      ? input.visualEffect
+      : 'none'
+  ) as LiveVisualEffect;
+  const cleanBackgroundPreset: LiveBackgroundPreset = (
+    ['camera', 'blur', 'studio_magenta', 'studio_blue', 'studio_dark'].includes(
+      String(input.backgroundPreset || ''),
+    )
+      ? input.backgroundPreset
+      : 'camera'
+  ) as LiveBackgroundPreset;
+  const cleanCommentPermission: LiveCommentPermission = (
+    ['all', 'followers', 'off'].includes(String(input.commentPermission || ''))
+      ? input.commentPermission
+      : 'all'
+  ) as LiveCommentPermission;
   const giftsEnabled = typeof input.giftsEnabled === 'boolean' ? input.giftsEnabled : true;
   const noiseCancellation =
     typeof input.noiseCancellation === 'boolean' ? input.noiseCancellation : false;
   const cleanCategory: ClipCategory =
     input.category && ALLOWED_CATEGORIES.includes(input.category) ? input.category : 'general';
+  const cleanAudioPreset: AudioPreset =
+    input.audioPreset && ALLOWED_AUDIO_PRESETS.includes(input.audioPreset)
+      ? input.audioPreset
+      : 'urban_beat';
   const cleanStreamUrl = sanitizeMediaUrl(input.streamUrl);
   const cleanGuestUid = (input.guestUid || '').trim().slice(0, 128);
   const cleanGuestDisplayName = (input.guestDisplayName || '').trim().slice(0, MAX_DISPLAY_NAME_LEN);
@@ -2888,8 +2937,8 @@ export async function startFirestoreLiveStream(
   try {
     await setDoc(doc(db, 'liveStreams', streamId), {
       id: streamId,
-      hostUid: profile.uid,
-      hostUsername: sanitizeUsername(profile.username, profile.uid),
+      hostUid,
+      hostUsername: sanitizeProfileUsername(profile, hostUid),
       hostDisplayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
       hostAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       title: cleanTitle,
@@ -2917,7 +2966,7 @@ export async function startFirestoreLiveStream(
       vipAlertStyle,
       vipAlertDurationSec,
       vipAlertSound,
-      audioPreset: input.audioPreset || 'urban_beat',
+      audioPreset: cleanAudioPreset,
       status: 'live',
       viewerCount: 1,
       likesCount: 0,
@@ -3425,7 +3474,7 @@ export async function sendLiveStreamMessage(
       id: messageId,
       streamId,
       authorId: profile.uid,
-      authorUsername: sanitizeUsername(profile.username, profile.uid),
+      authorUsername: sanitizeProfileUsername(profile),
       authorDisplayName: profile.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador',
       authorAvatarUrl: sanitizeAvatarUrl(profile.avatarUrl),
       text: cleanText,
@@ -3466,7 +3515,7 @@ export async function requestToJoin(
       id: userId,
       liveId,
       userId,
-      username: sanitizeUsername(profile?.username || userId, userId),
+      username: sanitizeProfileUsername(profile, userId),
       displayName:
         (profile?.displayName || profile?.username || 'Invitado').trim().slice(0, MAX_DISPLAY_NAME_LEN) ||
         'Invitado',
@@ -3576,7 +3625,9 @@ export async function acceptLiveJoinRequest(
   batch.set(doc(db, 'liveStreams', liveId, 'guests', req.userId), {
     uid: req.userId,
     streamId: liveId,
-    username: sanitizeUsername(req.username, req.userId),
+    username: sanitizeUsername(req.username, req.userId, {
+      allowReservedOfficial: req.username.trim().toLowerCase() === OFFICIAL_VIROKLIPZ_USERNAME,
+    }),
     displayName: req.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Invitado',
     avatarUrl: sanitizeAvatarUrl(req.avatarUrl),
     fanLevel: Math.min(50, Math.max(1, Math.floor(req.fanLevel || 1))),
@@ -4206,7 +4257,10 @@ export async function startFirestoreLiveBattle(input: {
       durationSec,
       endsAtMs,
       creator1Uid: input.creator1.uid,
-      creator1Username: sanitizeUsername(input.creator1.username, input.creator1.uid),
+      creator1Username: sanitizeUsername(input.creator1.username, input.creator1.uid, {
+        allowReservedOfficial:
+          input.creator1.username.trim().toLowerCase() === OFFICIAL_VIROKLIPZ_USERNAME,
+      }),
       creator1DisplayName: input.creator1.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador 1',
       creator1AvatarUrl: sanitizeAvatarUrl(input.creator1.avatarUrl),
       creator1PreviewUrl: sanitizeLivePreviewUrl(input.creator1.previewUrl),
@@ -4214,7 +4268,10 @@ export async function startFirestoreLiveBattle(input: {
       creator1Points: 0,
       creator1WinStreak: 1,
       creator2Uid: input.creator2.uid,
-      creator2Username: sanitizeUsername(input.creator2.username, input.creator2.uid),
+      creator2Username: sanitizeUsername(input.creator2.username, input.creator2.uid, {
+        allowReservedOfficial:
+          input.creator2.username.trim().toLowerCase() === OFFICIAL_VIROKLIPZ_USERNAME,
+      }),
       creator2DisplayName: input.creator2.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador 2',
       creator2AvatarUrl: sanitizeAvatarUrl(input.creator2.avatarUrl),
       creator2PreviewUrl: sanitizeLivePreviewUrl(input.creator2.previewUrl),
@@ -4278,7 +4335,7 @@ export async function sendBattleGift(
       battleId,
       targetSlot,
       senderUid: sender.uid,
-      senderUsername: sanitizeUsername(sender.username, sender.uid),
+      senderUsername: sanitizeProfileUsername(sender),
       senderDisplayName: senderDisplay,
       senderAvatarUrl: sanitizeAvatarUrl(sender.avatarUrl),
       giftId: gift.id.slice(0, 32),
