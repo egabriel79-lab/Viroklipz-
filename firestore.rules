@@ -70,6 +70,37 @@ service cloud.firestore {
       return roomId in ['general', 'musica', 'baile', 'cocina'];
     }
 
+    function isOfficialViroklipzUserDoc(data) {
+      return data.username == 'viroklipz'
+        || ('email' in data && data.email in ['Egabriel79@gmail.com', 'egabriel79@gmail.com']);
+    }
+
+    function prevRealFollowers(data) {
+      return ('realFollowersCount' in data)
+        ? data.realFollowersCount
+        : (isOfficialViroklipzUserDoc(data) ? 0 : (('followersCount' in data) ? data.followersCount : 0));
+    }
+
+    function isValidFollowerBreakdown(data, realCount) {
+      return 'realFollowersCount' in data
+        && 'seededFollowersCount' in data
+        && 'followersCount' in data
+        && data.realFollowersCount == realCount
+        && (
+          (
+            isOfficialViroklipzUserDoc(data)
+            && data.seededFollowersCount == (realCount >= 2000 ? 0 : 2000 - realCount)
+            && data.followersCount == (realCount >= 2000 ? realCount : 2000)
+          )
+          ||
+          (
+            !isOfficialViroklipzUserDoc(data)
+            && data.seededFollowersCount == 0
+            && data.followersCount == realCount
+          )
+        );
+    }
+
     // --- Validation Blueprints ---
     function isValidGuardianData(g) {
       return g is map
@@ -86,7 +117,7 @@ service cloud.firestore {
           'uid', 'username', 'displayName', 'bio', 'avatarUrl', 'isPublic', 'createdAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmToken', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isBanned', 'isAdmin', 'isVerified', 'coins', 'freeRoses', 'welcomeRechargeClaimed', 'followersCount', 'country', 'email', 'age', 'isMinor', 'guardianData', 'createdAt', 'updatedAt'
+          'uid', 'username', 'displayName', 'bio', 'bioColor', 'personalLink', 'pronouns', 'avatarUrl', 'isPublic', 'fcmToken', 'fcmTokenWeb', 'presenceStatus', 'mutedCommunityChat', 'fanLevel', 'fanPoints', 'banned', 'isBanned', 'isAdmin', 'isVerified', 'coins', 'freeRoses', 'welcomeRechargeClaimed', 'followersCount', 'realFollowersCount', 'seededFollowersCount', 'country', 'email', 'age', 'isMinor', 'guardianData', 'createdAt', 'updatedAt'
         ])
         && data.uid == userId
         && isValidUsername(data.username)
@@ -111,6 +142,8 @@ service cloud.firestore {
         && (!('freeRoses' in data) || (data.freeRoses is int && data.freeRoses >= 0 && data.freeRoses <= 10000))
         && (!('welcomeRechargeClaimed' in data) || data.welcomeRechargeClaimed is bool)
         && (!('followersCount' in data) || (data.followersCount is int && data.followersCount >= 0 && data.followersCount <= 100000000))
+        && (!('realFollowersCount' in data) || (data.realFollowersCount is int && data.realFollowersCount >= 0 && data.realFollowersCount <= 100000000))
+        && (!('seededFollowersCount' in data) || (data.seededFollowersCount is int && data.seededFollowersCount >= 0 && data.seededFollowersCount <= 2000))
         && (!('country' in data) || (data.country is string && data.country.size() <= 64))
         && (!('email' in data) || (data.email is string && data.email.size() <= 120))
         && (!('age' in data) || (data.age is int && data.age >= 1 && data.age <= 120))
@@ -488,7 +521,7 @@ service cloud.firestore {
         && data.keys().hasOnly([
           'id', 'streamId', 'authorId', 'authorUsername', 'authorDisplayName',
           'authorAvatarUrl', 'text', 'kind', 'giftId', 'giftName', 'giftValue',
-          'senderFanLevel', 'isTop1', 'triggeredAction', 'createdAt'
+          'senderFanLevel', 'senderFanTitle', 'isTop1', 'triggeredAction', 'createdAt'
         ])
         && data.id == messageId
         && isValidId(data.id)
@@ -504,6 +537,7 @@ service cloud.firestore {
         && (!('giftName' in data) || (data.giftName is string && data.giftName.size() <= 40))
         && (!('giftValue' in data) || (data.giftValue is int && data.giftValue >= 0 && data.giftValue <= 100000))
         && (!('senderFanLevel' in data) || (data.senderFanLevel is int && data.senderFanLevel >= 1 && data.senderFanLevel <= 50))
+        && (!('senderFanTitle' in data) || (data.senderFanTitle is string && data.senderFanTitle.size() >= 1 && data.senderFanTitle.size() <= 40))
         && (!('isTop1' in data) || data.isTop1 is bool)
         && (!('triggeredAction' in data) || (data.triggeredAction is string && data.triggeredAction.size() <= 80))
         && data.createdAt == request.time;
@@ -572,6 +606,24 @@ service cloud.firestore {
         && data.priceUsd is number && data.priceUsd > 0 && data.priceUsd <= 100
         && data.provider == 'VexPay'
         && data.createdAt == request.time;
+    }
+
+    function isValidCreatorFanSupport(data, userId, creatorId) {
+      return data.keys().hasAll([
+          'userId', 'creatorId', 'totalCoinsDonated', 'fanLevel', 'fanTitle', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'creatorId', 'totalCoinsDonated', 'fanLevel', 'fanTitle', 'updatedAt'
+        ])
+        && data.userId == userId
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && data.creatorId == creatorId
+        && isValidId(data.creatorId)
+        && data.totalCoinsDonated is int && data.totalCoinsDonated >= 0 && data.totalCoinsDonated <= 100000000
+        && data.fanLevel is int && data.fanLevel >= 1 && data.fanLevel <= 50
+        && data.fanTitle is string && data.fanTitle.size() >= 1 && data.fanTitle.size() <= 40
+        && data.updatedAt is timestamp;
     }
 
     function isValidLiveBattle(data, battleId) {
@@ -660,8 +712,8 @@ service cloud.firestore {
       allow create: if isVerified() && isValidId(userId) && isOwner(userId)
         && isValidUserProfile(incoming(), userId)
         && incoming().uid == request.auth.uid
-        && !('isAdmin' in incoming())
-        && !('isVerified' in incoming())
+        && (incoming().username != 'viroklipz' || isBootstrappedOwner())
+        && (isBootstrappedOwner() || (!('isAdmin' in incoming()) && !('isVerified' in incoming())))
         && !('banned' in incoming())
         && !('isBanned' in incoming())
         && (!('coins' in incoming()) || incoming().coins == 0)
@@ -672,6 +724,7 @@ service cloud.firestore {
       allow update: if isVerified() && isValidId(userId)
         && isValidUserProfile(incoming(), userId)
         && incoming().uid == existing().uid
+        && (incoming().username != 'viroklipz' || incoming().username == existing().username || isBootstrappedOwner())
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
@@ -696,6 +749,39 @@ service cloud.firestore {
           (
             isAdmin()
             && incoming().diff(existing()).affectedKeys().hasOnly(['isBanned', 'banned', 'isVerified', 'updatedAt'])
+          )
+          ||
+          (
+            isBootstrappedOwner()
+            && isOwner(userId)
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'isAdmin', 'isVerified', 'followersCount', 'realFollowersCount', 'seededFollowersCount', 'updatedAt'
+            ])
+            && incoming().isAdmin == true
+            && incoming().isVerified == true
+            && isValidFollowerBreakdown(incoming(), prevRealFollowers(existing()))
+          )
+          ||
+          (
+            userId != request.auth.uid
+            && existing().isPublic == true
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'followersCount', 'realFollowersCount', 'seededFollowersCount', 'updatedAt'
+            ])
+            && (
+              (
+                !exists(/databases/$(database)/documents/users/$(request.auth.uid)/following/$(userId))
+                && existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/following/$(userId))
+                && isValidFollowerBreakdown(incoming(), prevRealFollowers(existing()) + 1)
+              )
+              ||
+              (
+                exists(/databases/$(database)/documents/users/$(request.auth.uid)/following/$(userId))
+                && !existsAfter(/databases/$(database)/documents/users/$(request.auth.uid)/following/$(userId))
+                && prevRealFollowers(existing()) > 0
+                && isValidFollowerBreakdown(incoming(), prevRealFollowers(existing()) - 1)
+              )
+            )
           )
         );
       allow delete: if isVerified() && isValidId(userId) && (isOwner(userId) || isAdmin());
@@ -770,6 +856,23 @@ service cloud.firestore {
         allow create: if isVerified() && isValidId(userId) && isValidId(rechargeId) && isOwner(userId)
           && isValidCoinRecharge(incoming(), rechargeId, userId);
         allow update, delete: if false;
+      }
+
+      match /creatorSupport/{creatorId} {
+        allow get: if isValidId(userId) && isValidId(creatorId) && (isOwner(userId) || isOwner(creatorId) || isAdmin());
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isVerified() && isValidId(userId) && isValidId(creatorId) && isOwner(userId)
+          && isValidCreatorFanSupport(incoming(), userId, creatorId)
+          && incoming().updatedAt == request.time;
+        allow update: if isVerified() && isValidId(userId) && isValidId(creatorId) && isOwner(userId)
+          && isValidCreatorFanSupport(incoming(), userId, creatorId)
+          && incoming().userId == existing().userId
+          && incoming().creatorId == existing().creatorId
+          && incoming().totalCoinsDonated >= existing().totalCoinsDonated
+          && incoming().totalCoinsDonated <= existing().totalCoinsDonated + 100000
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['totalCoinsDonated', 'fanLevel', 'fanTitle', 'updatedAt']);
+        allow delete: if false;
       }
     }
 

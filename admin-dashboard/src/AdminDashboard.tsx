@@ -33,7 +33,10 @@ interface AdminUserRow {
   displayName: string;
   isPublic: boolean;
   isVerified: boolean;
+  isBanned: boolean;
   followersCount: number;
+  realFollowersCount: number;
+  seededFollowersCount: number;
   createdAtMs: number;
 }
 
@@ -138,13 +141,33 @@ export function AdminDashboard() {
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       const list: AdminUserRow[] = snap.docs.map((d) => {
         const data = d.data();
+        const username = String(data.username || 'creador');
+        const isOfficial = username.toLowerCase() === 'viroklipz';
+        const realCount =
+          typeof data.realFollowersCount === 'number'
+            ? Math.max(0, Math.floor(data.realFollowersCount))
+            : isOfficial
+              ? 0
+              : Math.max(0, Number(data.followersCount || 0));
+        const seededCount =
+          typeof data.seededFollowersCount === 'number'
+            ? Math.max(0, Math.floor(data.seededFollowersCount))
+            : isOfficial
+              ? Math.max(0, 2000 - realCount)
+              : 0;
         return {
           uid: String(data.uid || d.id),
-          username: String(data.username || 'creador'),
+          username,
           displayName: String(data.displayName || 'Creador'),
           isPublic: Boolean(data.isPublic ?? true),
-          isVerified: Boolean(data.isVerified ?? false),
-          followersCount: Number(data.followersCount || 0),
+          isVerified: Boolean(data.isVerified ?? false) || isOfficial,
+          isBanned: Boolean(data.isBanned ?? data.banned ?? false),
+          followersCount:
+            typeof data.followersCount === 'number'
+              ? Math.max(0, Math.floor(data.followersCount))
+              : realCount + seededCount,
+          realFollowersCount: realCount,
+          seededFollowersCount: seededCount,
           createdAtMs: toMs(data.createdAt),
         };
       });
@@ -361,6 +384,32 @@ export function AdminDashboard() {
     } catch (err) {
       showNotice(
         err instanceof Error ? err.message : 'No se pudo actualizar la verificación del usuario.',
+      );
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleToggleUserBan = async (targetUser: AdminUserRow, nextBanned: boolean) => {
+    if (targetUser.username.toLowerCase() === 'viroklipz') {
+      showNotice('No puedes suspender la cuenta oficial @viroklipz.');
+      return;
+    }
+    setBusyId(targetUser.uid);
+    try {
+      await updateDoc(doc(db, 'users', targetUser.uid), {
+        isBanned: nextBanned,
+        banned: nextBanned,
+        updatedAt: serverTimestamp(),
+      });
+      showNotice(
+        nextBanned
+          ? `Cuenta @${targetUser.username} suspendida.`
+          : `Suspensión retirada para @${targetUser.username}.`,
+      );
+    } catch (err) {
+      showNotice(
+        err instanceof Error ? err.message : 'No se pudo actualizar el estado de la cuenta.',
       );
     } finally {
       setBusyId(null);
@@ -725,18 +774,27 @@ export function AdminDashboard() {
                 <tr>
                   <th className="p-3.5">Usuario</th>
                   <th className="p-3.5">Nombre</th>
+                  <th className="p-3.5">Seguidores</th>
                   <th className="p-3.5">Verificado</th>
-                  <th className="p-3.5">Visibilidad</th>
+                  <th className="p-3.5">Estado</th>
                   <th className="p-3.5">UID</th>
                   <th className="p-3.5 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
                 {filteredUsers.map((u) => {
-                  const hasBadge = u.isVerified || u.followersCount >= 10000;
+                  const isOfficial = u.username.toLowerCase() === 'viroklipz';
+                  const hasBadge = u.isVerified || isOfficial || u.followersCount >= 10000;
                   return (
                     <tr key={u.uid} className="hover:bg-white/5">
-                      <td className="p-3.5 font-semibold text-[#00B4D8]">@{u.username}</td>
+                      <td className="p-3.5 font-semibold text-[#00B4D8]">
+                        @{u.username}
+                        {isOfficial && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded bg-[#6C5CE7]/25 text-[#B4A7FF] text-[10px] font-bold uppercase">
+                            Oficial
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3.5 text-white">
                         <span className="inline-flex items-center gap-1.5">
                           <span>{u.displayName}</span>
@@ -748,11 +806,19 @@ export function AdminDashboard() {
                           )}
                         </span>
                       </td>
+                      <td className="p-3.5 tabular-nums text-zinc-200">
+                        <div>{u.followersCount.toLocaleString('en-US')}</div>
+                        {isOfficial && (
+                          <div className="text-[10px] text-zinc-400">
+                            {u.realFollowersCount} reales · {u.seededFollowersCount} base
+                          </div>
+                        )}
+                      </td>
                       <td className="p-3.5">
                         {hasBadge ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#00B4D8]/15 border border-[#00B4D8]/45 text-[#00B4D8] font-bold">
                             <CheckCircle2 className="w-3.5 h-3.5" />
-                            {u.isVerified ? 'Verificado' : 'Auto (10K+)'}
+                            {isOfficial ? 'Oficial' : u.isVerified ? 'Verificado' : 'Auto (10K+)'}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-zinc-400">
@@ -760,9 +826,19 @@ export function AdminDashboard() {
                           </span>
                         )}
                       </td>
-                      <td className="p-3.5">{u.isPublic ? 'Público' : 'Privado'}</td>
+                      <td className="p-3.5">
+                        {u.isBanned ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">
+                            Suspendido
+                          </span>
+                        ) : (
+                          <span className="text-zinc-300">
+                            {u.isPublic ? 'Público' : 'Privado'}
+                          </span>
+                        )}
+                      </td>
                       <td className="p-3.5 font-mono text-zinc-400">{u.uid}</td>
-                      <td className="p-3.5 text-right">
+                      <td className="p-3.5 text-right space-x-2 whitespace-nowrap">
                         <button
                           type="button"
                           disabled={busyId === u.uid}
@@ -776,6 +852,21 @@ export function AdminDashboard() {
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           {u.isVerified ? 'Verificado' : 'Verificar'}
                         </button>
+                        {!isOfficial && (
+                          <button
+                            type="button"
+                            disabled={busyId === u.uid}
+                            onClick={() => void handleToggleUserBan(u, !u.isBanned)}
+                            className={`px-3 py-1.5 rounded-lg font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                              u.isBanned
+                                ? 'bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30'
+                                : 'bg-rose-600/80 hover:bg-rose-600 text-white'
+                            }`}
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            {u.isBanned ? 'Reactivar' : 'Suspender'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

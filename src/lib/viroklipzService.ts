@@ -23,6 +23,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -31,6 +32,13 @@ import {
   writeBatch,
   type Unsubscribe,
 } from 'firebase/firestore';
+import {
+  calculateProgressiveFollowers,
+  formatFollowersLabel,
+  isOfficialViroklipzAccount,
+  isOfficialViroklipzEmail,
+  OFFICIAL_VIROKLIPZ_USERNAME,
+} from './officialAccount';
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage';
 import {
   auth,
@@ -63,6 +71,7 @@ import {
   MAX_REPORT_DETAILS_LEN,
   MAX_VIDEO_FILE_BYTES,
   MAX_VISUAL_PRESET_LEN,
+  makeUniqueUsernameWithUid,
   sanitizeAvatarUrl,
   sanitizeMediaUrl,
   sanitizePersonalLink,
@@ -78,6 +87,7 @@ import type {
   ClipItem,
   ClipVisibility,
   CommunityChatMessage,
+  CreatorFanLevelResult,
   CreatorSummary,
   DirectMessage,
   DirectThread,
@@ -502,12 +512,16 @@ function buildFallbackProfile(
     effectiveEmail.split('@')[0] ||
     'Creador Viroklipz'
   ).trim();
+  const isOfficialEmail = isOfficialViroklipzEmail(effectiveEmail);
   const displayName = rawDisplayName.slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
   const username = sanitizeUsername(
     effectiveEmail.split('@')[0] || displayName || 'creador',
     user.uid,
+    { allowReservedOfficial: isOfficialEmail },
   );
   const now = Date.now();
+  const isOfficial = isOfficialViroklipzAccount({ username, email: effectiveEmail });
+  const breakdown = calculateProgressiveFollowers({ username, email: effectiveEmail }, 0, 0);
   return {
     uid: user.uid,
     username,
@@ -515,9 +529,12 @@ function buildFallbackProfile(
     bio: '',
     avatarUrl: sanitizeAvatarUrl(user.photoURL),
     isPublic: true,
-    isAdmin: false,
-    isVerified: false,
-    followersCount: 0,
+    isAdmin: isOfficial,
+    isVerified: isOfficial,
+    followersCount: breakdown.followersCount,
+    realFollowersCount: breakdown.realFollowersCount,
+    seededFollowersCount: breakdown.seededFollowersCount,
+    ...(effectiveEmail ? { email: effectiveEmail } : {}),
     coins: 0,
     freeRoses: 0,
     welcomeRechargeClaimed: false,
@@ -630,9 +647,50 @@ async function ensureUserProfileInternal(
       d.guardianData && typeof d.guardianData === 'object'
         ? (d.guardianData as Record<string, unknown>)
         : null;
+    const resolvedEmail =
+      (typeof d.email === 'string' && d.email.trim()) ||
+      effectiveOverrides?.email ||
+      user.email ||
+      '';
+    const resolvedUsername = String(
+      d.username ||
+        sanitizeUsername(user.email?.split('@')[0] || 'creador', user.uid, {
+          allowReservedOfficial: isOfficialViroklipzEmail(resolvedEmail),
+        }),
+    );
+    const breakdown = calculateProgressiveFollowers(
+      { username: resolvedUsername, email: resolvedEmail },
+      d.followersCount,
+      d.realFollowersCount,
+    );
+    const resolvedIsVerified = Boolean(d.isVerified ?? false) || breakdown.isOfficial;
+    const resolvedIsAdmin = Boolean(d.isAdmin ?? false) || breakdown.isOfficial;
+
+    if (
+      breakdown.isOfficial &&
+      (d.isVerified !== true ||
+        d.isAdmin !== true ||
+        d.followersCount !== breakdown.followersCount ||
+        typeof d.realFollowersCount !== 'number' ||
+        typeof d.seededFollowersCount !== 'number')
+    ) {
+      try {
+        await updateDoc(userRef, {
+          isAdmin: true,
+          isVerified: true,
+          realFollowersCount: breakdown.realFollowersCount,
+          seededFollowersCount: breakdown.seededFollowersCount,
+          followersCount: breakdown.followersCount,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err) {
+        console.warn('No se pudo sincronizar automáticamente el perfil oficial @viroklipz:', err);
+      }
+    }
+
     return {
       uid: String(d.uid || user.uid),
-      username: String(d.username || sanitizeUsername(user.email?.split('@')[0] || 'creador', user.uid)),
+      username: resolvedUsername,
       displayName: String(d.displayName || effectiveOverrides?.displayName || user.displayName || 'Creador'),
       bio: String(d.bio || ''),
       bioColor: typeof d.bioColor === 'string' && d.bioColor ? d.bioColor : '#FFFFFF',
@@ -640,9 +698,12 @@ async function ensureUserProfileInternal(
       pronouns: typeof d.pronouns === 'string' ? d.pronouns : '',
       avatarUrl: String(d.avatarUrl || ''),
       isPublic: Boolean(d.isPublic ?? true),
-      isAdmin: Boolean(d.isAdmin ?? false),
-      isVerified: Boolean(d.isVerified ?? false),
-      followersCount: typeof d.followersCount === 'number' ? d.followersCount : 0,
+      isAdmin: resolvedIsAdmin,
+      isVerified: resolvedIsVerified,
+      followersCount: breakdown.followersCount,
+      realFollowersCount: breakdown.realFollowersCount,
+      seededFollowersCount: breakdown.seededFollowersCount,
+      ...(resolvedEmail ? { email: resolvedEmail } : {}),
       fcmToken:
         typeof d.fcmToken === 'string'
           ? d.fcmToken
@@ -686,14 +747,37 @@ async function ensureUserProfileInternal(
 
   const fallback = buildFallbackProfile(user, effectiveOverrides);
   const effectiveEmail = (effectiveOverrides?.email || user.email || '').trim().slice(0, MAX_EMAIL_LEN);
+  const isOfficialEmail = isOfficialViroklipzEmail(effectiveEmail);
+  let uniqueUsername = fallback.username;
+  if (!isOfficialEmail) {
+    try {
+      const collisionSnap = await getDocs(
+        query(collection(db, 'users'), where('username', '==', uniqueUsername), limit(2)),
+      );
+      const takenByOther = collisionSnap.docs.some((docSnap) => docSnap.id !== user.uid);
+      if (takenByOther) {
+        uniqueUsername = makeUniqueUsernameWithUid(uniqueUsername, user.uid);
+      }
+    } catch {
+      uniqueUsername = makeUniqueUsernameWithUid(uniqueUsername, user.uid);
+    }
+  }
+  const initialBreakdown = calculateProgressiveFollowers(
+    { username: uniqueUsername, email: effectiveEmail },
+    0,
+    0,
+  );
   const userDocPayload: Record<string, unknown> = {
     uid: user.uid,
-    username: fallback.username,
+    username: uniqueUsername,
     displayName: fallback.displayName,
     bio: '',
     avatarUrl: fallback.avatarUrl,
     isPublic: true,
-    followersCount: 0,
+    followersCount: initialBreakdown.followersCount,
+    realFollowersCount: initialBreakdown.realFollowersCount,
+    seededFollowersCount: initialBreakdown.seededFollowersCount,
+    ...(initialBreakdown.isOfficial && user.emailVerified ? { isAdmin: true, isVerified: true } : {}),
     ...(effectiveEmail ? { email: effectiveEmail } : {}),
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -724,7 +808,7 @@ async function ensureUserProfileInternal(
   }
 
   if (!persisted) {
-    return fallback;
+    return { ...fallback, username: uniqueUsername };
   }
 
   try {
@@ -740,7 +824,7 @@ async function ensureUserProfileInternal(
     console.warn('No se pudo inicializar private/info (no bloquea el acceso):', err);
   }
 
-  return fallback;
+  return { ...fallback, username: uniqueUsername };
 }
 
 export async function updateUserProfile(
@@ -755,7 +839,27 @@ export async function updateUserProfile(
   },
 ): Promise<void> {
   const path = `users/${uid}`;
-  const cleanUsername = sanitizeUsername(updates.username, uid);
+  const isOfficialEmail = isOfficialViroklipzEmail(auth.currentUser?.email);
+  const requestedRaw = updates.username.trim().toLowerCase();
+  if (requestedRaw === OFFICIAL_VIROKLIPZ_USERNAME && !isOfficialEmail) {
+    throw new Error('El usuario @viroklipz está reservado exclusivamente para la cuenta oficial.');
+  }
+  const cleanUsername = sanitizeUsername(updates.username, uid, {
+    allowReservedOfficial: isOfficialEmail,
+  });
+  try {
+    const existingHandleSnap = await getDocs(
+      query(collection(db, 'users'), where('username', '==', cleanUsername), limit(2)),
+    );
+    const takenByOther = existingHandleSnap.docs.some((docSnap) => docSnap.id !== uid);
+    if (takenByOther) {
+      throw new Error('Ese @usuario ya pertenece a otra cuenta individual. Elige otro distinto.');
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('pertenece a otra cuenta')) {
+      throw err;
+    }
+  }
   const cleanDisplayName =
     updates.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Creador';
   const payload: Record<string, unknown> = {
@@ -1057,19 +1161,27 @@ export function subscribeEliteCommunityClips(
         const eliteCreators: CreatorSummary[] = snap.docs
           .map((d) => {
             const data = d.data();
-            const followers =
-              typeof data.followersCount === 'number' && Number.isFinite(data.followersCount)
-                ? Math.max(0, Math.floor(data.followersCount))
-                : 0;
+            const username = String(data.username || 'creador');
+            const email = typeof data.email === 'string' ? data.email : '';
+            const breakdown = calculateProgressiveFollowers(
+              { username, email },
+              data.followersCount,
+              data.realFollowersCount,
+            );
             return {
               uid: String(data.uid || d.id),
-              username: String(data.username || 'creador'),
+              username,
               displayName: String(data.displayName || 'Creador'),
               bio: String(data.bio || 'Creador en Viroklipz'),
               avatarUrl: String(data.avatarUrl || ''),
-              followersLabel: followers > 0 ? String(followers) : '',
-              followersCount: followers,
-              isVerified: Boolean(data.isVerified ?? false) || followers >= 10000,
+              followersLabel: formatFollowersLabel(breakdown.followersCount),
+              followersCount: breakdown.followersCount,
+              realFollowersCount: breakdown.realFollowersCount,
+              seededFollowersCount: breakdown.seededFollowersCount,
+              isVerified:
+                Boolean(data.isVerified ?? false) ||
+                breakdown.isOfficial ||
+                breakdown.followersCount >= 10000,
               fanLevel:
                 typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
                   ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
@@ -1271,18 +1383,72 @@ export async function toggleFollowCreator(
 ): Promise<void> {
   if (uid === targetId) return;
   const followRef = doc(db, 'users', uid, 'following', targetId);
+  const targetRef = doc(db, 'users', targetId);
   const path = `users/${uid}/following/${targetId}`;
   try {
-    if (currentlyFollowing) {
-      await deleteDoc(followRef);
-    } else {
-      await setDoc(followRef, {
+    await runTransaction(db, async (tx) => {
+      const [followSnap, targetSnap] = await Promise.all([
+        tx.get(followRef),
+        tx.get(targetRef),
+      ]);
+      const isAlreadyFollowing = followSnap.exists();
+
+      if (isAlreadyFollowing || (currentlyFollowing && !followSnap.exists())) {
+        if (!isAlreadyFollowing) return;
+        tx.delete(followRef);
+        if (targetSnap.exists()) {
+          const d = targetSnap.data() as Record<string, unknown>;
+          const accountRef = {
+            username: String(d.username || targetUsername),
+            email: typeof d.email === 'string' ? d.email : '',
+          };
+          const currentBreakdown = calculateProgressiveFollowers(
+            accountRef,
+            d.followersCount,
+            d.realFollowersCount,
+          );
+          if (currentBreakdown.realFollowersCount > 0) {
+            const nextReal = Math.max(0, currentBreakdown.realFollowersCount - 1);
+            const nextBreakdown = calculateProgressiveFollowers(accountRef, nextReal, nextReal);
+            tx.update(targetRef, {
+              realFollowersCount: nextBreakdown.realFollowersCount,
+              seededFollowersCount: nextBreakdown.seededFollowersCount,
+              followersCount: nextBreakdown.followersCount,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        }
+        return;
+      }
+
+      tx.set(followRef, {
         followerId: uid,
         targetId,
         targetUsername: sanitizeUsername(targetUsername, targetId),
         createdAt: serverTimestamp(),
       });
-    }
+
+      if (targetSnap.exists()) {
+        const d = targetSnap.data() as Record<string, unknown>;
+        const accountRef = {
+          username: String(d.username || targetUsername),
+          email: typeof d.email === 'string' ? d.email : '',
+        };
+        const currentBreakdown = calculateProgressiveFollowers(
+          accountRef,
+          d.followersCount,
+          d.realFollowersCount,
+        );
+        const nextReal = currentBreakdown.realFollowersCount + 1;
+        const nextBreakdown = calculateProgressiveFollowers(accountRef, nextReal, nextReal);
+        tx.update(targetRef, {
+          realFollowersCount: nextBreakdown.realFollowersCount,
+          seededFollowersCount: nextBreakdown.seededFollowersCount,
+          followersCount: nextBreakdown.followersCount,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    });
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
   }
@@ -1946,21 +2112,27 @@ export function subscribeUsernamePrefixSearch(
     (snap) => {
       const items: CreatorSummary[] = snap.docs.map((d) => {
         const data = d.data();
+        const username = String(data.username || 'creador');
+        const email = typeof data.email === 'string' ? data.email : '';
+        const breakdown = calculateProgressiveFollowers(
+          { username, email },
+          data.followersCount,
+          data.realFollowersCount,
+        );
         return {
           uid: String(data.uid || d.id),
-          username: String(data.username || 'creador'),
+          username,
           displayName: String(data.displayName || 'Creador'),
           bio: String(data.bio || 'Creador en Viroklipz'),
           avatarUrl: String(data.avatarUrl || ''),
-          followersLabel:
-            typeof data.followersCount === 'number' && data.followersCount > 0
-              ? String(data.followersCount)
-              : '',
-          followersCount:
-            typeof data.followersCount === 'number' && Number.isFinite(data.followersCount)
-              ? Math.max(0, Math.floor(data.followersCount))
-              : 0,
-          isVerified: Boolean(data.isVerified ?? false),
+          followersLabel: formatFollowersLabel(breakdown.followersCount),
+          followersCount: breakdown.followersCount,
+          realFollowersCount: breakdown.realFollowersCount,
+          seededFollowersCount: breakdown.seededFollowersCount,
+          isVerified:
+            Boolean(data.isVerified ?? false) ||
+            breakdown.isOfficial ||
+            breakdown.followersCount >= 10000,
           fanLevel:
             typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
               ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
@@ -1989,21 +2161,27 @@ export function subscribePublicUsers(
     (snap) => {
       const items: CreatorSummary[] = snap.docs.map((d) => {
         const data = d.data();
+        const username = String(data.username || 'creador');
+        const email = typeof data.email === 'string' ? data.email : '';
+        const breakdown = calculateProgressiveFollowers(
+          { username, email },
+          data.followersCount,
+          data.realFollowersCount,
+        );
         return {
           uid: String(data.uid || d.id),
-          username: String(data.username || 'creador'),
+          username,
           displayName: String(data.displayName || 'Creador'),
           bio: String(data.bio || 'Creador en Viroklipz'),
           avatarUrl: String(data.avatarUrl || ''),
-          followersLabel:
-            typeof data.followersCount === 'number' && data.followersCount > 0
-              ? String(data.followersCount)
-              : '',
-          followersCount:
-            typeof data.followersCount === 'number' && Number.isFinite(data.followersCount)
-              ? Math.max(0, Math.floor(data.followersCount))
-              : 0,
-          isVerified: Boolean(data.isVerified ?? false),
+          followersLabel: formatFollowersLabel(breakdown.followersCount),
+          followersCount: breakdown.followersCount,
+          realFollowersCount: breakdown.realFollowersCount,
+          seededFollowersCount: breakdown.seededFollowersCount,
+          isVerified:
+            Boolean(data.isVerified ?? false) ||
+            breakdown.isOfficial ||
+            breakdown.followersCount >= 10000,
           fanLevel:
             typeof data.fanLevel === 'number' && Number.isFinite(data.fanLevel)
               ? Math.min(50, Math.max(1, Math.floor(data.fanLevel)))
@@ -2801,6 +2979,8 @@ export async function updateFirestoreLiveHostSettings(
     payload.noiseCancellation = updates.noiseCancellation;
   }
 
+  if (Object.keys(payload).length <= 1) return;
+
   try {
     await updateDoc(doc(db, 'liveStreams', streamId), payload);
   } catch (err) {
@@ -2929,6 +3109,220 @@ export async function adjustLiveStreamViewer(
   }
 }
 
+interface CreatorFanLevelMilestone {
+  level: number;
+  minCoins: number;
+  title: string;
+}
+
+const CREATOR_FAN_LEVEL_MILESTONES: readonly CreatorFanLevelMilestone[] = [
+  { level: 1, minCoins: 0, title: 'Nuevo Fan' },
+  { level: 2, minCoins: 1, title: 'Simpatizante' },
+  { level: 3, minCoins: 40, title: 'Simpatizante' },
+  { level: 4, minCoins: 75, title: 'Simpatizante' },
+  { level: 5, minCoins: 100, title: 'Seguidor Fiel' },
+  { level: 6, minCoins: 175, title: 'Seguidor Fiel' },
+  { level: 7, minCoins: 250, title: 'Seguidor Fiel' },
+  { level: 8, minCoins: 350, title: 'Seguidor Fiel' },
+  { level: 9, minCoins: 450, title: 'Seguidor Fiel' },
+  { level: 10, minCoins: 500, title: 'Súper Fan' },
+  { level: 11, minCoins: 700, title: 'Súper Fan' },
+  { level: 12, minCoins: 900, title: 'Súper Fan' },
+  { level: 13, minCoins: 1150, title: 'Súper Fan' },
+  { level: 14, minCoins: 1350, title: 'Súper Fan' },
+  { level: 15, minCoins: 1500, title: 'Fan VIP' },
+  { level: 16, minCoins: 2100, title: 'Fan VIP' },
+  { level: 17, minCoins: 2800, title: 'Fan VIP' },
+  { level: 18, minCoins: 3600, title: 'Fan VIP' },
+  { level: 19, minCoins: 4400, title: 'Fan VIP' },
+  { level: 20, minCoins: 5000, title: 'Mecenas Estelar' },
+  { level: 21, minCoins: 6000, title: 'Mecenas Estelar' },
+  { level: 22, minCoins: 7000, title: 'Mecenas Estelar' },
+  { level: 23, minCoins: 8000, title: 'Mecenas Estelar' },
+  { level: 24, minCoins: 9000, title: 'Mecenas Estelar' },
+  { level: 25, minCoins: 10000, title: 'Mecenas Estelar' },
+  { level: 26, minCoins: 11000, title: 'Mecenas Estelar' },
+  { level: 27, minCoins: 12000, title: 'Mecenas Estelar' },
+  { level: 28, minCoins: 13000, title: 'Mecenas Estelar' },
+  { level: 29, minCoins: 14000, title: 'Mecenas Estelar' },
+  { level: 30, minCoins: 15000, title: 'Guardián Élite' },
+  { level: 31, minCoins: 18500, title: 'Guardián Élite' },
+  { level: 32, minCoins: 22000, title: 'Guardián Élite' },
+  { level: 33, minCoins: 25500, title: 'Guardián Élite' },
+  { level: 34, minCoins: 29000, title: 'Guardián Élite' },
+  { level: 35, minCoins: 32500, title: 'Guardián Élite' },
+  { level: 36, minCoins: 36000, title: 'Guardián Élite' },
+  { level: 37, minCoins: 39500, title: 'Guardián Élite' },
+  { level: 38, minCoins: 43000, title: 'Guardián Élite' },
+  { level: 39, minCoins: 46500, title: 'Guardián Élite' },
+  { level: 40, minCoins: 50000, title: 'Leyenda del Creador' },
+  { level: 41, minCoins: 60000, title: 'Leyenda del Creador' },
+  { level: 42, minCoins: 70000, title: 'Leyenda del Creador' },
+  { level: 43, minCoins: 80000, title: 'Leyenda del Creador' },
+  { level: 44, minCoins: 90000, title: 'Leyenda del Creador' },
+  { level: 45, minCoins: 100000, title: 'Leyenda del Creador' },
+  { level: 46, minCoins: 110000, title: 'Leyenda del Creador' },
+  { level: 47, minCoins: 120000, title: 'Leyenda del Creador' },
+  { level: 48, minCoins: 130000, title: 'Leyenda del Creador' },
+  { level: 49, minCoins: 140000, title: 'Leyenda del Creador' },
+  { level: 50, minCoins: 150000, title: 'Leyenda del Creador' },
+];
+
+export function getFanLevelTitle(level: number): string {
+  const safeLevel = Math.min(50, Math.max(1, Math.floor(level || 1)));
+  if (safeLevel >= 40) return 'Leyenda del Creador';
+  if (safeLevel >= 30) return 'Guardián Élite';
+  if (safeLevel >= 20) return 'Mecenas Estelar';
+  if (safeLevel >= 15) return 'Fan VIP';
+  if (safeLevel >= 10) return 'Súper Fan';
+  if (safeLevel >= 5) return 'Seguidor Fiel';
+  if (safeLevel >= 2) return 'Simpatizante';
+  return 'Nuevo Fan';
+}
+
+/**
+ * Calcula automáticamente el nivel de fan (1-50) y el título correspondiente para mostrarlo en el chat
+ * a partir de la cantidad total de monedas donadas a un creador específico.
+ */
+export function calculateFanLevelFromDonatedCoins(
+  totalCoinsDonated: number,
+): CreatorFanLevelResult {
+  const safeCoins =
+    typeof totalCoinsDonated === 'number' && Number.isFinite(totalCoinsDonated)
+      ? Math.min(100_000_000, Math.max(0, Math.floor(totalCoinsDonated)))
+      : 0;
+
+  let currentIndex = 0;
+  for (let i = 0; i < CREATOR_FAN_LEVEL_MILESTONES.length; i += 1) {
+    if (safeCoins >= CREATOR_FAN_LEVEL_MILESTONES[i].minCoins) {
+      currentIndex = i;
+    } else {
+      break;
+    }
+  }
+
+  const current = CREATOR_FAN_LEVEL_MILESTONES[currentIndex];
+  const next = CREATOR_FAN_LEVEL_MILESTONES[currentIndex + 1] ?? null;
+
+  return {
+    level: current.level,
+    title: current.title,
+    totalCoinsDonated: safeCoins,
+    nextLevel: next ? next.level : null,
+    nextLevelCoins: next ? next.minCoins : null,
+    nextTierTitle: next ? next.title : null,
+    coinsToNextLevel: next ? Math.max(0, next.minCoins - safeCoins) : 0,
+  };
+}
+
+/**
+ * Consulta en Firestore el total de monedas donadas por un usuario a un creador específico,
+ * calcula su nivel de fan automático y devuelve el título del nivel para mostrarlo en el chat.
+ */
+export async function calculateCreatorFanLevel(
+  userId: string,
+  creatorId: string,
+  options?: { additionalCoins?: number },
+): Promise<CreatorFanLevelResult> {
+  const additional =
+    typeof options?.additionalCoins === 'number' && Number.isFinite(options.additionalCoins)
+      ? Math.max(0, Math.floor(options.additionalCoins))
+      : 0;
+
+  if (!userId || !creatorId || !auth.currentUser) {
+    return calculateFanLevelFromDonatedCoins(additional);
+  }
+
+  try {
+    const supportSnap = await getDoc(doc(db, 'users', userId, 'creatorSupport', creatorId));
+    const storedCoins = supportSnap.exists()
+      ? Math.max(0, Math.floor(Number(supportSnap.data().totalCoinsDonated || 0)))
+      : 0;
+    return calculateFanLevelFromDonatedCoins(storedCoins + additional);
+  } catch (err) {
+    console.warn('No se pudo calcular el nivel de fan por creador:', err);
+    return calculateFanLevelFromDonatedCoins(additional);
+  }
+}
+
+export async function recordCreatorCoinDonation(
+  userId: string,
+  creatorId: string,
+  coinsDonated: number,
+): Promise<CreatorFanLevelResult> {
+  const safeDonation =
+    typeof coinsDonated === 'number' && Number.isFinite(coinsDonated)
+      ? Math.min(100_000, Math.max(0, Math.floor(coinsDonated)))
+      : 0;
+
+  if (!userId || !creatorId || !auth.currentUser || auth.currentUser.uid !== userId) {
+    return calculateFanLevelFromDonatedCoins(safeDonation);
+  }
+
+  const supportRef = doc(db, 'users', userId, 'creatorSupport', creatorId);
+  try {
+    const existingSnap = await getDoc(supportRef);
+    const prevCoins = existingSnap.exists()
+      ? Math.max(0, Math.floor(Number(existingSnap.data().totalCoinsDonated || 0)))
+      : 0;
+    const nextCoins = Math.min(100_000_000, prevCoins + safeDonation);
+    const computed = calculateFanLevelFromDonatedCoins(nextCoins);
+
+    if (safeDonation > 0 || !existingSnap.exists()) {
+      if (existingSnap.exists()) {
+        await updateDoc(supportRef, {
+          totalCoinsDonated: computed.totalCoinsDonated,
+          fanLevel: computed.level,
+          fanTitle: computed.title,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(supportRef, {
+          userId,
+          creatorId,
+          totalCoinsDonated: computed.totalCoinsDonated,
+          fanLevel: computed.level,
+          fanTitle: computed.title,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+
+    return computed;
+  } catch (err) {
+    console.warn('No se pudo guardar el progreso de fan por creador:', err);
+    return calculateFanLevelFromDonatedCoins(safeDonation);
+  }
+}
+
+export function subscribeCreatorFanStatus(
+  userId: string,
+  creatorId: string,
+  onData: (status: CreatorFanLevelResult) => void,
+): Unsubscribe {
+  if (!userId || !creatorId || !auth.currentUser) {
+    onData(calculateFanLevelFromDonatedCoins(0));
+    return () => {};
+  }
+
+  return onSnapshot(
+    doc(db, 'users', userId, 'creatorSupport', creatorId),
+    (snap) => {
+      if (!snap.exists()) {
+        onData(calculateFanLevelFromDonatedCoins(0));
+        return;
+      }
+      const data = snap.data();
+      const totalCoins = Math.max(0, Math.floor(Number(data.totalCoinsDonated || 0)));
+      onData(calculateFanLevelFromDonatedCoins(totalCoins));
+    },
+    (err) => {
+      console.warn('No se pudo suscribir al nivel de fan por creador:', err);
+      onData(calculateFanLevelFromDonatedCoins(0));
+    },
+  );
+}
+
 export function subscribeLiveStreamMessages(
   streamId: string,
   onData: (messages: LiveStreamMessage[]) => void,
@@ -2966,6 +3360,12 @@ export function subscribeLiveStreamMessages(
           giftValue: typeof data.giftValue === 'number' ? data.giftValue : undefined,
           senderFanLevel:
             typeof data.senderFanLevel === 'number' ? data.senderFanLevel : undefined,
+          senderFanTitle:
+            typeof data.senderFanTitle === 'string' && data.senderFanTitle.trim()
+              ? data.senderFanTitle
+              : typeof data.senderFanLevel === 'number'
+                ? getFanLevelTitle(data.senderFanLevel)
+                : undefined,
           isTop1: typeof data.isTop1 === 'boolean' ? data.isTop1 : undefined,
           triggeredAction:
             typeof data.triggeredAction === 'string' ? data.triggeredAction : undefined,
@@ -2988,10 +3388,12 @@ export async function sendLiveStreamMessage(
   kind: 'chat' | 'like' | 'gift' | 'join' = 'chat',
   giftMeta?: {
     giftId?: string;
-    giftName: string;
-    giftValue: number;
+    giftName?: string;
+    giftValue?: number;
     triggeredAction?: string;
     isTop1?: boolean;
+    fanLevel?: number;
+    fanTitle?: string;
   },
 ): Promise<void> {
   if (!streamId) return;
@@ -3010,7 +3412,13 @@ export async function sendLiveStreamMessage(
           ? `envió un regalo: ${giftMeta?.giftName || 'Viroklipz'}`
           : '');
   if (!cleanText) return;
-  const senderFanLevel = resolveFanLevel(profile.fanLevel, profile.fanPoints);
+  const senderFanLevel =
+    typeof giftMeta?.fanLevel === 'number' && Number.isFinite(giftMeta.fanLevel)
+      ? Math.min(50, Math.max(1, Math.floor(giftMeta.fanLevel)))
+      : resolveFanLevel(profile.fanLevel, profile.fanPoints);
+  const senderFanTitle = (
+    giftMeta?.fanTitle?.trim() || getFanLevelTitle(senderFanLevel)
+  ).slice(0, 40);
 
   try {
     await setDoc(doc(db, 'liveStreams', streamId, 'messages', messageId), {
@@ -3023,6 +3431,7 @@ export async function sendLiveStreamMessage(
       text: cleanText,
       kind,
       senderFanLevel,
+      senderFanTitle,
       ...(typeof giftMeta?.isTop1 === 'boolean' ? { isTop1: giftMeta.isTop1 } : {}),
       ...(giftMeta?.giftId ? { giftId: giftMeta.giftId.slice(0, 32) } : {}),
       ...(giftMeta?.giftName ? { giftName: giftMeta.giftName.slice(0, 40) } : {}),
@@ -3275,6 +3684,8 @@ export interface WalletSnapshot {
   freeRoses: number;
   welcomeRechargeClaimed: boolean;
   followersCount: number;
+  realFollowersCount: number;
+  seededFollowersCount: number;
   isAdmin: boolean;
   isVerified: boolean;
 }
@@ -3289,6 +3700,14 @@ export function subscribeUserWallet(
     (snap) => {
       if (!snap.exists()) return;
       const d = snap.data();
+      const breakdown = calculateProgressiveFollowers(
+        {
+          username: typeof d.username === 'string' ? d.username : '',
+          email: typeof d.email === 'string' ? d.email : '',
+        },
+        d.followersCount,
+        d.realFollowersCount,
+      );
       onData({
         coins:
           typeof d.coins === 'number' && Number.isFinite(d.coins)
@@ -3299,12 +3718,11 @@ export function subscribeUserWallet(
             ? Math.max(0, Math.floor(d.freeRoses))
             : 0,
         welcomeRechargeClaimed: Boolean(d.welcomeRechargeClaimed ?? false),
-        followersCount:
-          typeof d.followersCount === 'number' && Number.isFinite(d.followersCount)
-            ? Math.max(0, Math.floor(d.followersCount))
-            : 0,
-        isAdmin: Boolean(d.isAdmin ?? false),
-        isVerified: Boolean(d.isVerified ?? false),
+        followersCount: breakdown.followersCount,
+        realFollowersCount: breakdown.realFollowersCount,
+        seededFollowersCount: breakdown.seededFollowersCount,
+        isAdmin: Boolean(d.isAdmin ?? false) || breakdown.isOfficial,
+        isVerified: Boolean(d.isVerified ?? false) || breakdown.isOfficial,
       });
     },
     (err) => {
@@ -3335,12 +3753,17 @@ export function subscribeUserLiveAccess(
         return;
       }
       const d = snap.data();
+      const breakdown = calculateProgressiveFollowers(
+        {
+          username: typeof d.username === 'string' ? d.username : '',
+          email: typeof d.email === 'string' ? d.email : '',
+        },
+        d.followersCount,
+        d.realFollowersCount,
+      );
       onData({
-        followersCount:
-          typeof d.followersCount === 'number' && Number.isFinite(d.followersCount)
-            ? Math.max(0, Math.floor(d.followersCount))
-            : 0,
-        isAdmin: Boolean(d.isAdmin ?? false),
+        followersCount: breakdown.followersCount,
+        isAdmin: Boolean(d.isAdmin ?? false) || breakdown.isOfficial,
         loaded: true,
       });
     },
@@ -3524,20 +3947,31 @@ export async function sendLiveStreamGift(
   streamId: string,
   profile: UserProfile,
   gift: { id?: string; name: string; value: number },
+  options?: { creatorUid?: string },
 ): Promise<{
   matchedFavorite: AudienceFavorite | null;
   newFanLevel: number;
+  creatorFanLevel: number;
+  creatorFanTitle: string;
+  totalCoinsDonatedToCreator: number;
   vipAlertEnabled: boolean;
   usedFreeRose: boolean;
 }> {
   assertCooldown('liveGift', 900, 'Espera un segundo antes de enviar otro regalo.');
 
   const charge = await chargeGiftFromUserWallet(profile.uid, gift);
+  const donatedCoins = charge.usedFreeRose ? 0 : Math.max(0, Math.round(gift.value));
 
   if (!streamId) {
+    const creatorStatus = options?.creatorUid
+      ? await recordCreatorCoinDonation(profile.uid, options.creatorUid, donatedCoins)
+      : calculateFanLevelFromDonatedCoins(donatedCoins);
     return {
       matchedFavorite: null,
       newFanLevel: resolveFanLevel(profile.fanLevel, profile.fanPoints),
+      creatorFanLevel: creatorStatus.level,
+      creatorFanTitle: creatorStatus.title,
+      totalCoinsDonatedToCreator: creatorStatus.totalCoinsDonated,
       vipAlertEnabled: true,
       usedFreeRose: charge.usedFreeRose,
     };
@@ -3547,6 +3981,7 @@ export async function sendLiveStreamGift(
   let matchedFavorite: AudienceFavorite | null = null;
   let pointsPerCoin = DEFAULT_FAN_POINTS_PER_COIN;
   let vipAlertEnabled = true;
+  let hostUid = options?.creatorUid || '';
 
   try {
     const liveSnap = await getDoc(doc(db, 'liveStreams', streamId));
@@ -3556,8 +3991,8 @@ export async function sendLiveStreamGift(
       pointsPerCoin = sanitizeFanPointsPerCoin(data.fanPointsPerCoin);
       vipAlertEnabled =
         typeof data.vipAlertEnabled === 'boolean' ? data.vipAlertEnabled : true;
-
       if (typeof data.hostUid === 'string' && data.hostUid) {
+        hostUid = data.hostUid;
         const cfgSnap = await getDoc(doc(db, 'liveConfigs', data.hostUid)).catch(() => null);
         if (cfgSnap?.exists()) {
           const cfgData = cfgSnap.data();
@@ -3584,6 +4019,10 @@ export async function sendLiveStreamGift(
   } catch (err) {
     console.warn('No se pudo verificar Favoritos del Público en Firestore:', err);
   }
+
+  const creatorFanStatus = hostUid
+    ? await recordCreatorCoinDonation(profile.uid, hostUid, donatedCoins)
+    : calculateFanLevelFromDonatedCoins(donatedCoins);
 
   const earnedPoints = Math.max(1, gift.value * pointsPerCoin);
   const nextFanPoints = Math.min(10_000_000, Math.max(0, (profile.fanPoints || 0) + earnedPoints));
@@ -3616,6 +4055,8 @@ export async function sendLiveStreamGift(
         giftId: gift.id,
         giftName: gift.name,
         giftValue: gift.value,
+        fanLevel: creatorFanStatus.level,
+        fanTitle: creatorFanStatus.title,
         triggeredAction: vipAlertEnabled ? matchedFavorite?.action : undefined,
       },
     ),
@@ -3630,7 +4071,10 @@ export async function sendLiveStreamGift(
 
   return {
     matchedFavorite: vipAlertEnabled ? matchedFavorite : null,
-    newFanLevel: nextFanLevel,
+    newFanLevel: creatorFanStatus.level,
+    creatorFanLevel: creatorFanStatus.level,
+    creatorFanTitle: creatorFanStatus.title,
+    totalCoinsDonatedToCreator: creatorFanStatus.totalCoinsDonated,
     vipAlertEnabled,
     usedFreeRose: charge.usedFreeRose,
   };
@@ -3792,7 +4236,12 @@ export async function sendBattleGift(
   targetSlot: 'creator1' | 'creator2',
   sender: UserProfile,
   gift: { id: string; name: string; coins: number },
-): Promise<{ pointsAdded: number; usedFreeRose: boolean }> {
+  targetCreatorUid?: string,
+): Promise<{
+  pointsAdded: number;
+  usedFreeRose: boolean;
+  creatorFanStatus: CreatorFanLevelResult;
+}> {
   assertCooldown('battleGift', 600, 'Espera un instante antes de enviar otro apoyo.');
 
   const charge = await chargeGiftFromUserWallet(sender.uid, {
@@ -3802,8 +4251,13 @@ export async function sendBattleGift(
   });
 
   const pointsAdded = Math.min(100000, Math.max(1, gift.coins));
+  const donatedCoins = charge.usedFreeRose ? 0 : Math.max(0, Math.round(gift.coins));
   const eventId = createSafeId('pk_gift');
   const senderDisplay = sender.displayName.trim().slice(0, MAX_DISPLAY_NAME_LEN) || 'Fan';
+
+  const creatorFanStatus = targetCreatorUid
+    ? await recordCreatorCoinDonation(sender.uid, targetCreatorUid, donatedCoins)
+    : calculateFanLevelFromDonatedCoins(donatedCoins);
 
   if (battleId && !battleId.startsWith('local-')) {
     const battleRef = doc(db, 'liveBattles', battleId);
@@ -3840,7 +4294,7 @@ export async function sendBattleGift(
     }
   }
 
-  return { pointsAdded, usedFreeRose: charge.usedFreeRose };
+  return { pointsAdded, usedFreeRose: charge.usedFreeRose, creatorFanStatus };
 }
 
 export async function rematchFirestoreLiveBattle(

@@ -99,7 +99,15 @@
         },
         "followersCount": {
           "type": "number",
-          "description": "Cached follower count."
+          "description": "Total displayed follower count (for official @viroklipz account: realFollowersCount + seededFollowersCount)."
+        },
+        "realFollowersCount": {
+          "type": "number",
+          "description": "Count of real authenticated users following this account."
+        },
+        "seededFollowersCount": {
+          "type": "number",
+          "description": "Remaining baseline followers on official @viroklipz account, reduced 1-for-1 as real followers join."
         },
         "country": {
           "type": "string",
@@ -984,6 +992,10 @@
         "senderFanLevel": {
           "type": "number"
         },
+        "senderFanTitle": {
+          "type": "string",
+          "maxLength": 40
+        },
         "triggeredAction": {
           "type": "string",
           "maxLength": 80
@@ -1163,6 +1175,20 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "liveId", "userId", "username", "displayName", "avatarUrl", "fanLevel", "seatIndex", "status", "createdAt"]
+    },
+    "CreatorFanSupport": {
+      "title": "CreatorFanSupport",
+      "description": "Cumulative coins donated by a viewer to a specific creator and the resulting calculated fan level and title.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "creatorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "totalCoinsDonated": { "type": "number" },
+        "fanLevel": { "type": "number" },
+        "fanTitle": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "creatorId", "totalCoinsDonated", "fanLevel", "fanTitle", "updatedAt"]
     }
   },
   "firestore": {
@@ -1253,6 +1279,10 @@
     "/users/{userId}/recharges/{rechargeId}": {
       "schema": { "$ref": "#/entities/CoinRecharge" },
       "description": "Verified VexPay coin recharge receipts per user."
+    },
+    "/users/{userId}/creatorSupport/{creatorId}": {
+      "schema": { "$ref": "#/entities/CreatorFanSupport" },
+      "description": "Per-creator cumulative donated coins and calculated fan level/title per user."
     },
     "/liveBattles/{battleId}": {
       "schema": { "$ref": "#/entities/LiveBattle" },

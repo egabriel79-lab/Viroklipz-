@@ -58,6 +58,9 @@ export interface UserProfile {
   isAdmin?: boolean;
   isVerified?: boolean;
   followersCount?: number;
+  realFollowersCount?: number;
+  seededFollowersCount?: number;
+  email?: string;
   fcmToken?: string;
   fcmTokenWeb?: string;
   presenceStatus?: PresenceStatus;
@@ -158,6 +161,8 @@ export interface CreatorSummary {
   avatarUrl: string;
   followersLabel: string;
   followersCount?: number;
+  realFollowersCount?: number;
+  seededFollowersCount?: number;
   isVerified?: boolean;
   fanLevel?: number;
 }
@@ -312,6 +317,16 @@ export interface LiveStreamRecord {
   updatedAtMs: number;
 }
 
+export interface CreatorFanLevelResult {
+  level: number;
+  title: string;
+  totalCoinsDonated: number;
+  nextLevel: number | null;
+  nextLevelCoins: number | null;
+  nextTierTitle: string | null;
+  coinsToNextLevel: number;
+}
+
 export interface LiveStreamMessage {
   id: string;
   streamId: string;
@@ -325,6 +340,7 @@ export interface LiveStreamMessage {
   giftName?: string;
   giftValue?: number;
   senderFanLevel?: number;
+  senderFanTitle?: string;
   isTop1?: boolean;
   triggeredAction?: string;
   createdAtMs: number;

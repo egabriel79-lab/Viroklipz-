@@ -104,10 +104,77 @@ function validateSafeHttpsUrl(raw: string): URL | null {
   }
 }
 
+function buildContentSecurityPolicy(isProduction: boolean): string {
+  const scriptSrc = isProduction
+    ? "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://apis.google.com https://www.googletagmanager.com"
+    : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com https://apis.google.com https://www.googletagmanager.com";
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+    scriptSrc,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' data: blob: https:",
+    "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://*.cloudfunctions.net https://*.run.app https://firebasestorage.googleapis.com https://fcmregistrations.googleapis.com https://firebaseinstallations.googleapis.com https://*.cloudflarestorage.com https://*.cloudflarestream.com wss://*.firebaseio.com wss: ws:",
+    "frame-src 'self' https://*.firebaseapp.com https://accounts.google.com https://*.google.com",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+  ].join('; ');
+}
+
 async function startServer() {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', true);
+
+  app.use((req: Request, res: Response, next) => {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase();
+    const isHttps = req.secure || forwardedProto === 'https';
+
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(self), microphone=(self), geolocation=(), payment=(self), usb=(), interest-cohort=()',
+    );
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    res.setHeader('Origin-Agent-Cluster', '?1');
+    res.setHeader('Content-Security-Policy', buildContentSecurityPolicy(IS_PRODUCTION));
+    if (isHttps) {
+      res.setHeader(
+        'Strict-Transport-Security',
+        'max-age=31536000; includeSubDomains; preload',
+      );
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '1mb' }));
+
+  app.get('/.well-known/security.txt', (_req: Request, res: Response) => {
+    const secPath = path.resolve(__dirname, 'public', '.well-known', 'security.txt');
+    if (fs.existsSync(secPath)) {
+      res.type('text/plain; charset=utf-8').send(fs.readFileSync(secPath, 'utf-8'));
+      return;
+    }
+    res
+      .type('text/plain; charset=utf-8')
+      .send(
+        [
+          'Contact: mailto:egabriel79@gmail.com',
+          'Expires: 2027-12-31T23:59:59.000Z',
+          'Preferred-Languages: es, en',
+        ].join('\n'),
+      );
+  });
 
   app.get('/api/health', (_req: Request, res: Response) => {
     res.json({

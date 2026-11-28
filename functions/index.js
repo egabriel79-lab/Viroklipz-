@@ -1,6 +1,6 @@
-const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
 const { initializeApp } = require('firebase-admin/app');
-const { getFirestore } = require('firebase-admin/firestore');
+const { FieldValue, getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 
 const app = initializeApp();
@@ -10,6 +10,44 @@ const app = initializeApp();
 const DATABASE_ID = 'ai-studio-7fa9d191-669e-450e-a908-de7aaf9be995';
 const db = getFirestore(app, DATABASE_ID);
 const messaging = getMessaging(app);
+const OFFICIAL_VIROKLIPZ_BASELINE_FOLLOWERS = 2000;
+const OFFICIAL_VIROKLIPZ_EMAILS = ['egabriel79@gmail.com'];
+
+function isOfficialViroklipzDoc(userData) {
+  if (!userData || typeof userData !== 'object') return false;
+  const uname = typeof userData.username === 'string' ? userData.username.trim().toLowerCase() : '';
+  if (uname === 'viroklipz') return true;
+  const email = typeof userData.email === 'string' ? userData.email.trim().toLowerCase() : '';
+  return email !== '' && OFFICIAL_VIROKLIPZ_EMAILS.includes(email);
+}
+
+async function reconcileTargetFollowersCount(targetId, targetData) {
+  if (!targetId || !targetData) return;
+  const countSnap = await db
+    .collectionGroup('following')
+    .where('targetId', '==', targetId)
+    .count()
+    .get();
+  const realFollowersCount = Math.max(0, Number(countSnap.data()?.count || 0));
+  const isOfficial = isOfficialViroklipzDoc(targetData);
+  const seededFollowersCount = isOfficial
+    ? Math.max(0, OFFICIAL_VIROKLIPZ_BASELINE_FOLLOWERS - realFollowersCount)
+    : 0;
+  const followersCount = realFollowersCount + seededFollowersCount;
+
+  const updates = {
+    realFollowersCount,
+    seededFollowersCount,
+    followersCount,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (isOfficial) {
+    updates.isVerified = true;
+    updates.isAdmin = true;
+  }
+
+  await db.collection('users').doc(targetId).update(updates);
+}
 
 function extractToken(userData) {
   if (!userData || typeof userData !== 'object') return '';
@@ -69,6 +107,8 @@ exports.onNewFollower = onDocumentCreated(
     ]);
 
     if (!targetSnap.exists) return;
+    await reconcileTargetFollowersCount(targetId, targetSnap.data());
+
     const token = extractToken(targetSnap.data());
     if (!token) return;
 
@@ -105,6 +145,24 @@ exports.onNewFollower = onDocumentCreated(
     } catch (err) {
       await cleanupInvalidTokens([{ uid: targetId, errorCode: err?.code }]);
     }
+  },
+);
+
+/**
+ * 1b. Reconciliación de seguidores al dejar de seguir
+ * Trigger: al eliminarse users/{followerId}/following/{targetId}
+ */
+exports.onFollowerRemoved = onDocumentDeleted(
+  {
+    document: 'users/{followerId}/following/{targetId}',
+    database: DATABASE_ID,
+  },
+  async (event) => {
+    const { followerId, targetId } = event.params;
+    if (!followerId || !targetId || followerId === targetId) return;
+    const targetSnap = await db.collection('users').doc(targetId).get();
+    if (!targetSnap.exists) return;
+    await reconcileTargetFollowersCount(targetId, targetSnap.data());
   },
 );
 

@@ -1,13 +1,18 @@
+import { isOfficialViroklipzAccount } from '../lib/officialAccount';
+
 export const VERIFIED_MIN_FOLLOWERS = 10000;
 
 export interface VerifiableAccount {
   isVerified?: boolean | null;
   followersCount?: number | null;
+  username?: string | null;
+  email?: string | null;
 }
 
 export function isAccountVerified(account?: VerifiableAccount | null): boolean {
   if (!account) return false;
   if (account.isVerified === true) return true;
+  if (isOfficialViroklipzAccount(account)) return true;
   return (
     typeof account.followersCount === 'number' &&
     Number.isFinite(account.followersCount) &&

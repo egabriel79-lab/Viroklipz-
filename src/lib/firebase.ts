@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import {
   doc,
+  enableNetwork,
   getDocFromServer,
   getFirestore,
   initializeFirestore,
@@ -19,7 +20,7 @@ function createFirestoreInstance(): Firestore {
     return initializeFirestore(
       app,
       {
-        experimentalAutoDetectLongPolling: true,
+        experimentalForceLongPolling: true,
         localCache: persistentLocalCache({
           tabManager: persistentMultipleTabManager(),
         }),
@@ -27,7 +28,17 @@ function createFirestoreInstance(): Firestore {
       firebaseConfig.firestoreDatabaseId,
     );
   } catch {
-    return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    try {
+      return initializeFirestore(
+        app,
+        {
+          experimentalForceLongPolling: true,
+        },
+        firebaseConfig.firestoreDatabaseId,
+      );
+    } catch {
+      return getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    }
   }
 }
 
@@ -101,6 +112,12 @@ async function testConnection() {
       console.error('Please check your Firebase configuration.');
     }
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    void enableNetwork(db).catch(() => {});
+  });
 }
 
 void testConnection();

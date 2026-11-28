@@ -45,6 +45,10 @@ import { useTheme } from '../context/ThemeContext';
 import { evaluateClipDistribution } from '../lib/distributionAlgorithm';
 import { ClipThumbnail } from './ClipThumbnail';
 import { isAccountVerified, VerifiedBadge } from './VerifiedBadge';
+import {
+  calculateProgressiveFollowers,
+  formatFollowersLabel,
+} from '../lib/officialAccount';
 import viroklipzBanner3d from '../assets/images/viroklipz_banner_3d_1795446833092.jpg';
 import { deleteClipMediaBlob, listOfflineClipIds } from '../lib/mediaStorage';
 import {
@@ -957,30 +961,50 @@ export function ProfileView({
   }
 
   const profileData = isViewingExternalCreator && viewedCreator
-    ? {
-        uid: viewedCreator.uid,
-        username: viewedCreator.username,
-        displayName: viewedCreator.displayName,
-        bio: viewedCreator.bio || DEFAULT_BIO_COPY,
-        bioColor: '#FFFFFF',
-        personalLink: '',
-        avatarUrl: viewedCreator.avatarUrl,
-        followersLabel: viewedCreator.followersLabel,
-        followersCount: viewedCreator.followersCount,
-        isVerified: viewedCreator.isVerified,
-      }
-    : {
-        uid: currentUser!.uid,
-        username: currentUser!.username,
-        displayName: currentUser!.displayName,
-        bio: currentUser!.bio.trim() ? currentUser!.bio : DEFAULT_BIO_COPY,
-        bioColor: currentUser!.bioColor || '#FFFFFF',
-        personalLink: normalizeSavedPersonalLink(currentUser!.personalLink),
-        avatarUrl: currentUser!.avatarUrl,
-        followersLabel: null,
-        followersCount: currentUser!.followersCount,
-        isVerified: currentUser!.isVerified,
-      };
+    ? (() => {
+        const viewedBreakdown = calculateProgressiveFollowers(
+          { username: viewedCreator.username },
+          viewedCreator.followersCount,
+          viewedCreator.realFollowersCount,
+        );
+        return {
+          uid: viewedCreator.uid,
+          username: viewedCreator.username,
+          displayName: viewedCreator.displayName,
+          bio: viewedCreator.bio || DEFAULT_BIO_COPY,
+          bioColor: '#FFFFFF',
+          personalLink: '',
+          avatarUrl: viewedCreator.avatarUrl,
+          followersLabel:
+            viewedCreator.followersLabel ||
+            formatFollowersLabel(viewedBreakdown.followersCount) ||
+            null,
+          followersCount: viewedBreakdown.followersCount,
+          isVerified: Boolean(viewedCreator.isVerified) || viewedBreakdown.isOfficial,
+        };
+      })()
+    : (() => {
+        const ownBreakdown = calculateProgressiveFollowers(
+          currentUser!,
+          currentUser!.followersCount,
+          currentUser!.realFollowersCount,
+        );
+        return {
+          uid: currentUser!.uid,
+          username: currentUser!.username,
+          displayName: currentUser!.displayName,
+          bio: currentUser!.bio.trim() ? currentUser!.bio : DEFAULT_BIO_COPY,
+          bioColor: currentUser!.bioColor || '#FFFFFF',
+          personalLink: normalizeSavedPersonalLink(currentUser!.personalLink),
+          avatarUrl: currentUser!.avatarUrl,
+          followersLabel:
+            ownBreakdown.followersCount > 0
+              ? formatFollowersLabel(ownBreakdown.followersCount)
+              : null,
+          followersCount: ownBreakdown.followersCount,
+          isVerified: Boolean(currentUser!.isVerified) || ownBreakdown.isOfficial,
+        };
+      })();
 
   const profileFanLevel = isViewingExternalCreator
     ? resolveFanLevel(viewedCreator?.fanLevel)
@@ -1038,6 +1062,7 @@ export function ProfileView({
       bio: bioDraft,
       bioColor: bioColorDraft,
       personalLink: cleanedLink,
+      email: currentUser.email ?? '',
     });
     if (!check.ok) {
       setProfileError(check.message);
@@ -1064,8 +1089,12 @@ export function ProfileView({
       }
       setProfileSavedNotice(true);
       setEditProfileOpen(false);
-    } catch {
-      setProfileError('No pudimos guardar los cambios de tu perfil.');
+    } catch (err) {
+      setProfileError(
+        err instanceof Error && err.message && !err.message.startsWith('{')
+          ? err.message
+          : 'No pudimos guardar los cambios de tu perfil.',
+      );
     } finally {
       setSavingProfile(false);
     }

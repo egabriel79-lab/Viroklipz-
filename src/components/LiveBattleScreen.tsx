@@ -20,6 +20,7 @@ import {
   type LiveGiftCatalogItem,
 } from '../lib/liveGifts';
 import {
+  getFanLevelTitle,
   InsufficientCoinsError,
   rematchFirestoreLiveBattle,
   sendBattleGift,
@@ -68,6 +69,7 @@ interface BattleChatEntry {
   id: string;
   senderName: string;
   fanLevel: number;
+  fanTitle?: string;
   text: string;
   kind: 'chat' | 'gift' | 'system';
   accentSlot?: 'creator1' | 'creator2';
@@ -344,6 +346,7 @@ export function LiveBattleScreen({
       id: `fs-${m.id}`,
       senderName: m.authorDisplayName || m.authorUsername,
       fanLevel: m.senderFanLevel || 1,
+      fanTitle: m.senderFanTitle || getFanLevelTitle(m.senderFanLevel || 1),
       text: m.text,
       kind: m.kind === 'gift' ? 'gift' : 'chat',
     }));
@@ -352,6 +355,7 @@ export function LiveBattleScreen({
       id: `gift-${evt.id}`,
       senderName: evt.senderDisplayName,
       fanLevel: 1,
+      fanTitle: getFanLevelTitle(1),
       text: `envió ${evt.giftName} (+${evt.points} pts a ${
         evt.targetSlot === 'creator1' ? creator1.displayName : creator2.displayName
       })`,
@@ -415,9 +419,14 @@ export function LiveBattleScreen({
     const senderName = currentUser.displayName || currentUser.username;
     setChatInput('');
 
+    const viewerTitle = getFanLevelTitle(viewerFanLevel);
+
     if (hostStreamId) {
       try {
-        await sendLiveStreamMessage(hostStreamId, currentUser, clean, 'chat');
+        await sendLiveStreamMessage(hostStreamId, currentUser, clean, 'chat', {
+          fanLevel: viewerFanLevel,
+          fanTitle: viewerTitle,
+        });
         return;
       } catch {
         // Fallback to local feed if stream document is demo/not persisted
@@ -431,6 +440,7 @@ export function LiveBattleScreen({
           id: `lchat-${Date.now()}`,
           senderName,
           fanLevel: viewerFanLevel,
+          fanTitle: viewerTitle,
           text: clean,
           kind: 'chat' as const,
         },
@@ -496,6 +506,7 @@ export function LiveBattleScreen({
     const senderName = currentUser.displayName || currentUser.username;
 
     try {
+      const targetCreatorUid = slot === 'creator1' ? creator1.uid : creator2.uid;
       const result = await sendBattleGift(
         activeBattleId || `local-${Date.now()}`,
         slot,
@@ -505,6 +516,7 @@ export function LiveBattleScreen({
           name: gift.name,
           coins: gift.coins,
         },
+        targetCreatorUid,
       );
 
       if (!battleDoc) {
@@ -534,9 +546,9 @@ export function LiveBattleScreen({
         );
       }
 
-      if (gift.coins >= 50) {
+      if (result.creatorFanStatus.level > 1 || gift.coins >= 50) {
         setLocalFanLevelOverride((prev) =>
-          Math.min(50, Math.max(1, (prev ?? viewerFanLevel) + 1)),
+          Math.min(50, Math.max(prev ?? viewerFanLevel, result.creatorFanStatus.level)),
         );
       }
 
@@ -960,7 +972,7 @@ export function LiveBattleScreen({
             {/* 4. Información sutil del usuario arriba del chat */}
             <div className="inline-flex items-center gap-2 text-[11px] text-white/85 px-1">
               <span className="font-bold text-[#7DD3FC] tabular-nums">
-                Lv.{viewerFanLevel}
+                Lv.{viewerFanLevel} · {getFanLevelTitle(viewerFanLevel)}
               </span>
               <span aria-hidden="true" className="text-white/35">
                 ·
@@ -997,7 +1009,7 @@ export function LiveBattleScreen({
                 >
                   {entry.kind !== 'system' && (
                     <span className="mr-1.5 text-[10px] font-extrabold text-[#7DD3FC] tabular-nums">
-                      Lv.{entry.fanLevel}
+                      Lv.{entry.fanLevel} · {entry.fanTitle || getFanLevelTitle(entry.fanLevel)}
                     </span>
                   )}
                   <span

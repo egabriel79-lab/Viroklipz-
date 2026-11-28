@@ -27,16 +27,20 @@ import {
 } from '../lib/liveGifts';
 import {
   adjustLiveStreamViewer,
+  calculateFanLevelFromDonatedCoins,
+  getFanLevelTitle,
   incrementLiveStreamLike,
   InsufficientCoinsError,
   sendLivePartyJoinAnnouncement,
   sendLiveStreamGift,
   sendLiveStreamMessage,
+  subscribeCreatorFanStatus,
   subscribeCreatorLiveConfig,
   subscribeLiveStreamMessages,
 } from '../lib/viroklipzService';
 import type {
   AudienceFavorite,
+  CreatorFanLevelResult,
   FanClubPerk,
   LiveStreamMessage,
   UserProfile,
@@ -75,6 +79,7 @@ interface LiveChatItem {
   username: string;
   avatarUrl?: string;
   fanLevel?: number;
+  fanTitle?: string;
   isTop1?: boolean;
   giftValue?: number;
   text: string;
@@ -170,6 +175,10 @@ export function LiveViewerScreen({
       : DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
   );
   const [localFanLevelOverride, setLocalFanLevelOverride] = useState<number | null>(null);
+  const [localDonatedCoins, setLocalDonatedCoins] = useState<number>(0);
+  const [creatorFanStatus, setCreatorFanStatus] = useState<CreatorFanLevelResult>(() =>
+    calculateFanLevelFromDonatedCoins(0),
+  );
   const [activeGiftBanner, setActiveGiftBanner] = useState<{ sender: string; giftName: string } | null>(
     null,
   );
@@ -277,7 +286,22 @@ export function LiveViewerScreen({
 
   useEffect(() => {
     setLocalFanLevelOverride(null);
-  }, [currentUser?.uid]);
+    setLocalDonatedCoins(0);
+    setCreatorFanStatus(calculateFanLevelFromDonatedCoins(0));
+  }, [currentUser?.uid, stream.creator.uid]);
+
+  useEffect(() => {
+    if (!currentUser?.uid || !stream.creator.uid) {
+      setCreatorFanStatus(calculateFanLevelFromDonatedCoins(0));
+      return;
+    }
+    const unsub = subscribeCreatorFanStatus(
+      currentUser.uid,
+      stream.creator.uid,
+      setCreatorFanStatus,
+    );
+    return () => unsub();
+  }, [currentUser?.uid, stream.creator.uid]);
 
   useEffect(() => {
     if (!stream.isFirestoreLive || !stream.creator.uid) return;
@@ -324,9 +348,8 @@ export function LiveViewerScreen({
   // Real-time Firestore live messages & viewer counter
   useEffect(() => {
     const actorName = currentUser?.displayName || currentUser?.username || 'Invitado';
-    const actorLevel = currentUser
-      ? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)
-      : 1;
+    const actorLevel = creatorFanStatus.level;
+    const actorTitle = creatorFanStatus.title;
 
     if (!stream.isFirestoreLive || !stream.streamId) {
       setFirestoreMessages([]);
@@ -337,6 +360,7 @@ export function LiveViewerScreen({
           username: stream.creator.displayName,
           avatarUrl: stream.creator.avatarUrl,
           fanLevel: resolveFanLevel(stream.creator.fanLevel),
+          fanTitle: getFanLevelTitle(resolveFanLevel(stream.creator.fanLevel)),
           text: stream.about?.trim() || `¡Bienvenidos al vivo! ${stream.streamTitle}`,
           kind: 'chat',
         },
@@ -344,7 +368,8 @@ export function LiveViewerScreen({
           id: `welcome-${stream.creator.uid}-top1`,
           authorId: 'top-supporter-showcase',
           username: 'ValeriaVIP',
-          fanLevel: 14,
+          fanLevel: 22,
+          fanTitle: getFanLevelTitle(22),
           isTop1: true,
           giftValue: 7000,
           text: 'envió Coche Deportivo (7000 monedas)',
@@ -356,6 +381,7 @@ export function LiveViewerScreen({
           username: actorName,
           avatarUrl: currentUser?.avatarUrl,
           fanLevel: actorLevel,
+          fanTitle: actorTitle,
           text: `👋 ${actorName} se ha unido a la fiesta`,
           kind: 'join',
         },
@@ -485,18 +511,25 @@ export function LiveViewerScreen({
     const text = chatDraft.trim();
     if (!text) return;
 
+    const activeFanLevel = currentUser
+      ? localFanLevelOverride ?? Math.max(creatorFanStatus.level, resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints))
+      : 1;
+    const activeFanTitle = creatorFanStatus.totalCoinsDonated > 0
+      ? creatorFanStatus.title
+      : getFanLevelTitle(activeFanLevel);
+
     if (stream.isFirestoreLive && stream.streamId) {
       setChatDraft('');
       try {
-        await sendLiveStreamMessage(stream.streamId, currentUser, text, 'chat');
+        await sendLiveStreamMessage(stream.streamId, currentUser, text, 'chat', {
+          fanLevel: activeFanLevel,
+          fanTitle: activeFanTitle,
+        });
       } catch (err) {
         showRoomNotice(err instanceof Error ? err.message : 'No se pudo enviar el comentario');
       }
       return;
     }
-
-    const viewerLevel =
-      localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints);
 
     setLocalMessages((prev) =>
       [
@@ -505,7 +538,8 @@ export function LiveViewerScreen({
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           username: currentUser.displayName || currentUser.username,
           avatarUrl: currentUser.avatarUrl,
-          fanLevel: viewerLevel,
+          fanLevel: activeFanLevel,
+          fanTitle: activeFanTitle,
           text,
           kind: 'chat' as const,
         },
@@ -515,6 +549,13 @@ export function LiveViewerScreen({
   };
 
   const handleSendHeart = () => {
+    const activeFanLevel = currentUser
+      ? localFanLevelOverride ?? Math.max(creatorFanStatus.level, resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints))
+      : 1;
+    const activeFanTitle = creatorFanStatus.totalCoinsDonated > 0
+      ? creatorFanStatus.title
+      : getFanLevelTitle(activeFanLevel);
+
     if (stream.isFirestoreLive && stream.streamId) {
       if (currentUser) {
         void incrementLiveStreamLike(stream.streamId);
@@ -523,14 +564,15 @@ export function LiveViewerScreen({
           currentUser,
           'le dio un me gusta al LIVE',
           'like',
+          {
+            fanLevel: activeFanLevel,
+            fanTitle: activeFanTitle,
+          },
         ).catch(() => {});
       }
     } else {
       setLocalLikes((prev) => prev + 1);
       const actorName = currentUser?.displayName || currentUser?.username || 'Invitado';
-      const viewerLevel = currentUser
-        ? localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)
-        : 1;
       setLocalMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.kind === 'like' && last.username === actorName) return prev;
@@ -539,7 +581,8 @@ export function LiveViewerScreen({
           {
             id: `like-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             username: actorName,
-            fanLevel: viewerLevel,
+            fanLevel: activeFanLevel,
+            fanTitle: activeFanTitle,
             text: 'le dio un me gusta al LIVE',
             kind: 'like' as const,
           },
@@ -581,7 +624,7 @@ export function LiveViewerScreen({
     }
 
     const currentViewerLevel =
-      localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints);
+      localFanLevelOverride ?? Math.max(creatorFanStatus.level, resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints));
     if (gift.requiredFanLevel && currentViewerLevel < gift.requiredFanLevel) {
       showRoomNotice(`Nivel ${gift.requiredFanLevel} requerido para enviar ${gift.name}`);
       return;
@@ -612,6 +655,7 @@ export function LiveViewerScreen({
           name: gift.name,
           value: gift.coins,
         },
+        { creatorUid: stream.creator.uid },
       );
 
       setIsGiftDrawerOpen(false);
@@ -628,7 +672,10 @@ export function LiveViewerScreen({
       }
 
       if (stream.isFirestoreLive && stream.streamId) {
-        setLocalFanLevelOverride(result.newFanLevel);
+        setLocalFanLevelOverride(result.creatorFanLevel);
+        setCreatorFanStatus(
+          calculateFanLevelFromDonatedCoins(result.totalCoinsDonatedToCreator),
+        );
         if (result.matchedFavorite && !isGiantGift) {
           triggerVipNotification({
             viewerName: senderName,
@@ -648,15 +695,15 @@ export function LiveViewerScreen({
           f.giftId.toLowerCase() === gift.id.toLowerCase() ||
           f.giftName.trim().toLowerCase() === gift.name.trim().toLowerCase(),
       );
-      const nextLevel = Math.min(
-        50,
-        Math.max(
-          1,
-          (localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)) +
-            (gift.coins >= 50 ? 1 : 0),
-        ),
+      const donatedDelta = result.usedFreeRose ? 0 : gift.coins;
+      const nextCoinsTotal = Math.max(
+        result.totalCoinsDonatedToCreator,
+        localDonatedCoins + donatedDelta,
       );
-      setLocalFanLevelOverride(nextLevel);
+      setLocalDonatedCoins(nextCoinsTotal);
+      const nextStatus = calculateFanLevelFromDonatedCoins(nextCoinsTotal);
+      setCreatorFanStatus(nextStatus);
+      setLocalFanLevelOverride(nextStatus.level);
       setLocalGifts((prev) => prev + 1);
 
       if (localMatch && !isGiantGift) {
@@ -686,7 +733,8 @@ export function LiveViewerScreen({
             id: `gift-${Date.now()}`,
             username: senderName,
             avatarUrl: currentUser.avatarUrl,
-            fanLevel: nextLevel,
+            fanLevel: nextStatus.level,
+            fanTitle: nextStatus.title,
             text: localGiftText,
             kind: 'gift' as const,
           },
@@ -732,8 +780,12 @@ export function LiveViewerScreen({
   const totalGifts = stream.isFirestoreLive ? (stream.giftsCount ?? 0) : localGifts;
 
   const viewerFanLevel = currentUser
-    ? localFanLevelOverride ?? resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints)
+    ? localFanLevelOverride ?? Math.max(creatorFanStatus.level, resolveFanLevel(currentUser.fanLevel, currentUser.fanPoints))
     : 1;
+  const viewerFanTitle =
+    creatorFanStatus.totalCoinsDonated > 0
+      ? creatorFanStatus.title
+      : getFanLevelTitle(viewerFanLevel);
   const hostFanLevel = resolveFanLevel(stream.creator.fanLevel);
   const activeVipStylePreset =
     VIP_ALERT_STYLES.find((s) => s.id === vipAlertStyle) || VIP_ALERT_STYLES[0];
@@ -748,6 +800,7 @@ export function LiveViewerScreen({
               username: stream.creator.displayName,
               avatarUrl: stream.creator.avatarUrl,
               fanLevel: hostFanLevel,
+              fanTitle: getFanLevelTitle(hostFanLevel),
               text: stream.about?.trim() || `¡Bienvenidos al vivo! ${stream.streamTitle}`,
               kind: 'chat',
             },
@@ -757,6 +810,7 @@ export function LiveViewerScreen({
               username: m.authorDisplayName,
               avatarUrl: m.authorAvatarUrl,
               fanLevel: m.senderFanLevel ?? 1,
+              fanTitle: m.senderFanTitle || getFanLevelTitle(m.senderFanLevel ?? 1),
               isTop1: m.isTop1,
               giftValue: m.giftValue,
               text: m.text,
@@ -1090,10 +1144,12 @@ export function LiveViewerScreen({
                 return (
                   <div
                     key={msg.id}
-                    className="inline-flex items-center gap-2 px-3 py-1 rounded-2xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
+                    className="inline-flex flex-wrap max-w-full items-center gap-2 px-3 py-1 rounded-2xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
                   >
                     <FanLevelBadge
                       level={msg.fanLevel || 1}
+                      titleLabel={msg.fanTitle}
+                      showTitle
                       isTop1={rowIsTop1}
                       compact
                     />
@@ -1105,11 +1161,13 @@ export function LiveViewerScreen({
                 return (
                   <div
                     key={msg.id}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
+                    className="inline-flex flex-wrap max-w-full items-center gap-2 px-3 py-1.5 rounded-2xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
                   >
                     <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
                     <FanLevelBadge
                       level={msg.fanLevel || 1}
+                      titleLabel={msg.fanTitle}
+                      showTitle
                       isTop1={rowIsTop1}
                       compact
                     />
@@ -1135,6 +1193,8 @@ export function LiveViewerScreen({
                     <p className="text-[12.5px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] leading-snug flex items-center flex-wrap gap-1.5">
                       <FanLevelBadge
                         level={msg.fanLevel || 1}
+                        titleLabel={msg.fanTitle}
+                        showTitle
                         isTop1={rowIsTop1}
                         compact
                       />
@@ -1156,6 +1216,8 @@ export function LiveViewerScreen({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <FanLevelBadge
                         level={msg.fanLevel || 1}
+                        titleLabel={msg.fanTitle}
+                        showTitle
                         isTop1={rowIsTop1}
                         compact
                       />
@@ -1276,7 +1338,7 @@ export function LiveViewerScreen({
                         Tu nivel actual como fan:
                       </span>
                     </div>
-                    <FanLevelBadge level={viewerFanLevel} />
+                    <FanLevelBadge level={viewerFanLevel} titleLabel={viewerFanTitle} showTitle />
                   </div>
 
                   {fanPerks.map((perk) => {
@@ -1348,7 +1410,7 @@ export function LiveViewerScreen({
                 {currentUser?.displayName || currentUser?.username || 'Invitado'}
               </span>
               {isAccountVerified(currentUser) && <VerifiedBadge size={16} />}
-              <FanLevelBadge level={viewerFanLevel} compact />
+              <FanLevelBadge level={viewerFanLevel} titleLabel={viewerFanTitle} showTitle compact />
             </div>
             <span className="text-[10px] font-semibold text-zinc-300 truncate max-w-[160px]">
               {fanClubName}

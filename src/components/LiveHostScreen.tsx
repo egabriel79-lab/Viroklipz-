@@ -366,10 +366,12 @@ export function LiveHostScreen({
                 return (
                   <div
                     key={msg.id}
-                    className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
+                    className="inline-flex flex-wrap max-w-full items-center gap-2 px-3 py-1 rounded-xl bg-gradient-to-r from-[#6C5CE7]/35 to-[#00B4D8]/30 backdrop-blur-md border border-[#00B4D8]/40 text-xs text-white"
                   >
                     <FanLevelBadge
                       level={msg.senderFanLevel || 1}
+                      titleLabel={msg.senderFanTitle}
+                      showTitle
                       isTop1={rowIsTop1}
                       compact
                     />
@@ -381,11 +383,13 @@ export function LiveHostScreen({
                 return (
                   <div
                     key={msg.id}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
+                    className="inline-flex flex-wrap max-w-full items-center gap-2 px-3 py-1.5 rounded-xl bg-[#101322]/85 backdrop-blur-md border border-[#E84393]/55 text-xs text-white shadow-[0_0_16px_rgba(232,67,147,0.3)]"
                   >
                     <Gift className="w-3.5 h-3.5 text-[#00B4D8] shrink-0" />
                     <FanLevelBadge
                       level={msg.senderFanLevel || 1}
+                      titleLabel={msg.senderFanTitle}
+                      showTitle
                       isTop1={rowIsTop1}
                       compact
                     />
@@ -403,6 +407,8 @@ export function LiveHostScreen({
                     <p className="text-white/90 drop-shadow flex items-center flex-wrap gap-1">
                       <FanLevelBadge
                         level={msg.senderFanLevel || 1}
+                        titleLabel={msg.senderFanTitle}
+                        showTitle
                         isTop1={rowIsTop1}
                         compact
                       />
@@ -424,6 +430,8 @@ export function LiveHostScreen({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <FanLevelBadge
                         level={msg.senderFanLevel || 1}
+                        titleLabel={msg.senderFanTitle}
+                        showTitle
                         isTop1={rowIsTop1}
                         compact
                       />

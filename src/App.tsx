@@ -58,6 +58,10 @@ import {
 } from './lib/fcmNotifications';
 import { auth } from './lib/firebase';
 import {
+  calculateProgressiveFollowers,
+  formatFollowersLabel,
+} from './lib/officialAccount';
+import {
   deleteUserBannerGallery,
   getUserAvatarBlob,
   getUserBannerGallery,
@@ -228,13 +232,10 @@ function ViroklipzApp() {
   const [notInterestedIds, setNotInterestedIds] = useState<Set<string>>(new Set());
   const [reportTarget, setReportTarget] = useState<ReportTarget | null>(null);
   const [liveComments, setLiveComments] = useState<ClipComment[]>([]);
-  const [localCommunityMuted, setLocalCommunityMuted] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('viroklipz_muted_community') === '1';
-    } catch {
-      return false;
-    }
-  });
+  const [localCommunityMuted, setLocalCommunityMuted] = useState<boolean>(false);
+
+  const getCommunityMuteKey = (uid?: string | null) =>
+    uid ? `viroklipz_muted_community_${uid}` : 'viroklipz_muted_community_guest';
 
   const isCommunityMuted = currentUser?.mutedCommunityChat ?? localCommunityMuted;
   const isCommunityMutedRef = useRef(isCommunityMuted);
@@ -298,8 +299,27 @@ function ViroklipzApp() {
         setFollowingIds(new Set());
         setBlockedUsers([]);
         setPrivateClips([]);
+        setStatusNotes([]);
+        setNotInterestedIds(new Set());
+        setViewedCreator(null);
+        setIsCommentsMobileOpen(false);
+        setReportTarget(null);
+        setPushAlert(null);
+        setLocalCommunityMuted(false);
         setAuthReady(true);
         return;
+      }
+      setViewedCreator(null);
+      setIsCommentsMobileOpen(false);
+      setReportTarget(null);
+      setPushAlert(null);
+      setNotInterestedIds(new Set());
+      try {
+        setLocalCommunityMuted(
+          localStorage.getItem(`viroklipz_muted_community_${fbUser.uid}`) === '1',
+        );
+      } catch {
+        setLocalCommunityMuted(false);
       }
       try {
         const profile = await ensureUserProfile(fbUser);
@@ -326,6 +346,8 @@ function ViroklipzApp() {
               freeRoses: wallet.freeRoses,
               welcomeRechargeClaimed: wallet.welcomeRechargeClaimed,
               followersCount: wallet.followersCount,
+              realFollowersCount: wallet.realFollowersCount,
+              seededFollowersCount: wallet.seededFollowersCount,
               isAdmin: wallet.isAdmin,
               isVerified: wallet.isVerified,
             }
@@ -693,18 +715,22 @@ function ViroklipzApp() {
     FEATURED_CREATORS.forEach((c) => map.set(c.uid, c));
     publicUsers.forEach((u) => map.set(u.uid, u));
     if (effectiveUser) {
+      const ownBreakdown = calculateProgressiveFollowers(
+        effectiveUser,
+        effectiveUser.followersCount,
+        effectiveUser.realFollowersCount,
+      );
       map.set(effectiveUser.uid, {
         uid: effectiveUser.uid,
         username: effectiveUser.username,
         displayName: effectiveUser.displayName,
         bio: effectiveUser.bio || 'Creador de contenido en Viroklipz.',
         avatarUrl: effectiveUser.avatarUrl,
-        followersLabel:
-          typeof effectiveUser.followersCount === 'number' && effectiveUser.followersCount > 0
-            ? String(effectiveUser.followersCount)
-            : '',
-        followersCount: effectiveUser.followersCount,
-        isVerified: effectiveUser.isVerified,
+        followersLabel: formatFollowersLabel(ownBreakdown.followersCount),
+        followersCount: ownBreakdown.followersCount,
+        realFollowersCount: ownBreakdown.realFollowersCount,
+        seededFollowersCount: ownBreakdown.seededFollowersCount,
+        isVerified: isAccountVerified(effectiveUser),
       });
     }
     allUserAccessibleClips.forEach((clip) => {
@@ -1221,7 +1247,7 @@ function ViroklipzApp() {
     const next = !isCommunityMuted;
     setLocalCommunityMuted(next);
     try {
-      localStorage.setItem('viroklipz_muted_community', next ? '1' : '0');
+      localStorage.setItem(getCommunityMuteKey(currentUser?.uid), next ? '1' : '0');
     } catch {
       // Ignore storage quota errors
     }
@@ -1791,6 +1817,7 @@ function ViroklipzApp() {
         {section === 'chats' && (
           <div className="h-full">
             <ChatView
+              key={currentUser?.uid || 'guest'}
               currentUser={effectiveUser}
               blockedIds={blockedIds}
               creatorsDirectory={creatorsDirectory}
@@ -1835,6 +1862,7 @@ function ViroklipzApp() {
         {section === 'perfil' && (
           <div className="min-h-full bg-zinc-50 dark:bg-[#0F111A] pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] lg:pt-0 lg:pb-0">
             <ProfileView
+              key={currentUser?.uid || 'guest'}
               currentUser={effectiveUser}
               privateInfo={privateInfo}
               viewedCreator={resolvedViewedCreator}

@@ -104,7 +104,8 @@ interface ChatViewProps {
 
 type InboxSubView = 'inbox' | 'community' | 'dm' | 'activity' | 'notifications';
 
-const MUTE_STORAGE_KEY = 'viroklipz_muted_community';
+const getMuteStorageKey = (uid?: string | null) =>
+  uid ? `viroklipz_muted_community_${uid}` : 'viroklipz_muted_community_guest';
 
 const PRESENCE_META: Record<
   PresenceStatus,
@@ -273,11 +274,20 @@ export function ChatView({
     useState<PresenceStatus | null>(null);
   const [localMutedFallback, setLocalMutedFallback] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(MUTE_STORAGE_KEY) === '1';
+      return localStorage.getItem(getMuteStorageKey(currentUser?.uid)) === '1';
     } catch {
       return false;
     }
   });
+  useEffect(() => {
+    try {
+      setLocalMutedFallback(
+        localStorage.getItem(getMuteStorageKey(currentUser?.uid)) === '1',
+      );
+    } catch {
+      setLocalMutedFallback(false);
+    }
+  }, [currentUser?.uid]);
   const [muteFeedback, setMuteFeedback] = useState<string | null>(null);
 
   const [communityMessages, setCommunityMessages] = useState<CommunityChatMessage[]>([]);
@@ -1090,7 +1100,7 @@ export function ChatView({
     const nextMuted = !effectiveCommunityMuted;
     setLocalMutedFallback(nextMuted);
     try {
-      localStorage.setItem(MUTE_STORAGE_KEY, nextMuted ? '1' : '0');
+      localStorage.setItem(getMuteStorageKey(currentUser.uid), nextMuted ? '1' : '0');
     } catch {
       // Ignore storage failures
     }

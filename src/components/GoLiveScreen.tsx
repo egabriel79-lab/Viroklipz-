@@ -276,10 +276,20 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
     vipAlertSound: DEFAULT_VIP_ALERT_CONFIG.vipAlertSound,
   });
   const noiseCancellationRef = useRef(noiseCancellation);
+  const micMutedRef = useRef(micMuted);
+  const camOffRef = useRef(camOff);
 
   useEffect(() => {
     noiseCancellationRef.current = noiseCancellation;
   }, [noiseCancellation]);
+
+  useEffect(() => {
+    micMutedRef.current = micMuted;
+  }, [micMuted]);
+
+  useEffect(() => {
+    camOffRef.current = camOff;
+  }, [camOff]);
 
   useEffect(() => {
     vipConfigRef.current = {
@@ -378,7 +388,24 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
             autoGainControl: true,
           },
         });
+        stream.getAudioTracks().forEach((track) => {
+          track.enabled = !micMutedRef.current;
+        });
+        stream.getVideoTracks().forEach((track) => {
+          track.enabled = !camOffRef.current;
+        });
         streamRef.current = stream;
+        if (peerRef.current) {
+          const nextVideoTrack = stream.getVideoTracks()[0] || null;
+          const nextAudioTrack = stream.getAudioTracks()[0] || null;
+          peerRef.current.getSenders().forEach((sender) => {
+            if (sender.track?.kind === 'video' && nextVideoTrack) {
+              void sender.replaceTrack(nextVideoTrack).catch(() => {});
+            } else if (sender.track?.kind === 'audio' && nextAudioTrack) {
+              void sender.replaceTrack(nextAudioTrack).catch(() => {});
+            }
+          });
+        }
         setCameraReady(true);
         window.setTimeout(() => {
           if (previewVideoRef.current) {
@@ -410,11 +437,14 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
       return;
     }
     void startPreview(facingMode, quality);
+  }, [canGoLive, facingMode, quality, startPreview, stopMediaStream]);
+
+  useEffect(() => {
     return () => {
       void stopBroadcastResources();
       stopMediaStream();
     };
-  }, [canGoLive, facingMode, quality, startPreview, stopBroadcastResources, stopMediaStream]);
+  }, [stopBroadcastResources, stopMediaStream]);
 
   const triggerPartyJoinToast = useCallback((message: string) => {
     setPartyJoinToast(message);
@@ -599,8 +629,9 @@ export function GoLiveScreen({ currentUser, onBack, onClose }: GoLiveScreenProps
   }) => {
     if (updates.audience) setAudience(updates.audience);
     if (updates.quality) setQuality(updates.quality);
-    if (isLive && activeStreamId) {
-      await updateFirestoreLiveHostSettings(activeStreamId, updates);
+    const streamIdToUpdate = activeStreamIdRef.current || activeStreamId;
+    if (isLive && streamIdToUpdate && liveStreamDoc?.status !== 'ended') {
+      await updateFirestoreLiveHostSettings(streamIdToUpdate, updates);
     }
   };
 

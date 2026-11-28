@@ -860,6 +860,7 @@ export function MultiGuestLobbyScreen({
               >
                 <FanLevelBadge
                   level={item.fanLevel}
+                  showTitle
                   isTop1={item.isTop1}
                   compact
                 />

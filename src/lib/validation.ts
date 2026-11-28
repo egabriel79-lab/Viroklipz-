@@ -183,7 +183,27 @@ export function validateVideoFile(file: File): { ok: true } | { ok: false; messa
   return { ok: true };
 }
 
-export function sanitizeUsername(raw: string, fallbackUid?: string): string {
+export function makeUniqueUsernameWithUid(baseRaw: string, uid: string): string {
+  const cleanBase = baseRaw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._]/g, '');
+  const uidSuffix = (uid || 'user')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 6) || 'u1';
+  const maxBaseLen = Math.max(3, MAX_USERNAME_LEN - uidSuffix.length - 1);
+  const trimmedBase = (cleanBase || 'klip').slice(0, maxBaseLen);
+  const candidate = `${trimmedBase}.${uidSuffix}`.slice(0, MAX_USERNAME_LEN);
+  return USERNAME_REGEX.test(candidate) ? candidate : `klip.${uidSuffix}`.slice(0, MAX_USERNAME_LEN);
+}
+
+export function sanitizeUsername(
+  raw: string,
+  fallbackUid?: string,
+  options?: { allowReservedOfficial?: boolean },
+): string {
   const cleaned = raw
     .toLowerCase()
     .normalize('NFD')
@@ -191,16 +211,15 @@ export function sanitizeUsername(raw: string, fallbackUid?: string): string {
     .replace(/[^a-z0-9._]/g, '')
     .slice(0, MAX_USERNAME_LEN);
 
+  if (cleaned === 'viroklipz' && !options?.allowReservedOfficial) {
+    return makeUniqueUsernameWithUid('klip', fallbackUid || 'user');
+  }
+
   if (USERNAME_REGEX.test(cleaned)) {
     return cleaned;
   }
 
-  const suffix = (fallbackUid || 'user')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
-    .slice(0, 8);
-  const candidate = `klip.${suffix || 'creador'}`.slice(0, MAX_USERNAME_LEN);
-  return candidate.length >= MIN_USERNAME_LEN ? candidate : 'klip.creador';
+  return makeUniqueUsernameWithUid('klip', fallbackUid || 'user');
 }
 
 export function sanitizeAvatarUrl(raw: string | null | undefined): string {
@@ -321,6 +340,7 @@ export function validateProfilePayload(input: {
   bioColor?: string;
   personalLink?: string;
   pronouns?: string;
+  email?: string | null;
 }): { ok: true } | { ok: false; message: string } {
   const username = input.username.trim().toLowerCase();
   if (!USERNAME_REGEX.test(username)) {
@@ -328,6 +348,17 @@ export function validateProfilePayload(input: {
       ok: false,
       message:
         'El nombre de usuario debe tener entre 3 y 24 caracteres (solo minúsculas, números, puntos o guiones bajos).',
+    };
+  }
+  const normalizedEmail = (input.email || '').trim().toLowerCase();
+  if (
+    username === 'viroklipz' &&
+    input.email !== undefined &&
+    normalizedEmail !== 'egabriel79@gmail.com'
+  ) {
+    return {
+      ok: false,
+      message: 'El usuario @viroklipz está reservado exclusivamente para la cuenta oficial.',
     };
   }
   const displayName = input.displayName.trim();
